@@ -37,6 +37,12 @@ std::unique_ptr<juce::RangedAudioParameter> makeParam (const s8::ParamDef& d, co
         toText = [] (float v, int) { return (v > 0 ? "+" : "") + juce::String (v, 2) + " st"; };
     else if (sid == "arp_gate" || sid == "arp_swing" || sid == "arp_chance")
         toText = [] (float v, int) { return juce::String (juce::roundToInt (v * 100.0f)) + " %"; };
+    else if (sid == "fx_delay_ms" || sid == "rv_predelay")
+        toText = [] (float v, int) { return juce::String (juce::roundToInt (v)) + " ms"; };
+    else if (sid == "eq_low" || sid == "eq_high")
+        toText = [] (float v, int) { return (v > 0 ? "+" : "") + juce::String (v, 1) + " dB"; };
+    else if (sid.endsWith ("_amt"))
+        toText = [] (float v, int) { return (v > 0 ? "+" : "") + juce::String (juce::roundToInt (v * 100.0f)) + " %"; };
     else if (sid == "tempo")
         toText = [] (float v, int) { return juce::String (v, 1) + " BPM"; };
     else if (sid == "tune")
@@ -54,6 +60,8 @@ Saturno8Processor::Saturno8Processor()
     {
         for (auto& d : s8::layerParamDefs())
             raw[l][d.id] = apvts.getRawParameterValue (pid (kPrefix[l], d.id));
+        for (auto& d : s8::layerFxParamDefs())
+            raw[l][d.id] = apvts.getRawParameterValue (pid (kPrefix[l], d.id));
         chordCopy[l] = { 0, 4, 7 };
         chordCopy[l].reserve (s8::kMaxVoices);
         pendingChord[l].reserve (s8::kMaxVoices);
@@ -70,6 +78,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout Saturno8Processor::createLay
     for (int l = 0; l < 2; ++l)
     {
         for (auto& d : s8::layerParamDefs())
+            layout.add (makeParam (d, kPrefix[l], l == 0 ? "Sup." : "Inf."));
+        for (auto& d : s8::layerFxParamDefs())
             layout.add (makeParam (d, kPrefix[l], l == 0 ? "Sup." : "Inf."));
     }
     for (auto& d : s8::globalParamDefs())
@@ -120,6 +130,19 @@ void Saturno8Processor::readLayer (s8::Layer& layer, const RawMap& m, int& last)
     pp.range = n ("arp_range"); pp.division = n ("arp_div"); pp.gate = f ("arp_gate"); pp.swing = f ("arp_swing");
     pp.chance = f ("arp_chance"); pp.hold = b ("arp_hold"); pp.length = n ("seq_len"); pp.play = (s8::SeqPlay) n ("seq_play");
 
+    static constexpr std::string_view slots[4][3] { { "mod1_src", "mod1_dst", "mod1_amt" }, { "mod2_src", "mod2_dst", "mod2_amt" },
+                                                    { "mod3_src", "mod3_dst", "mod3_amt" }, { "mod4_src", "mod4_dst", "mod4_amt" } };
+    for (size_t k = 0; k < 4; ++k)
+        p.matrix[k] = { (s8::ModSrc) n (slots[k][0]), (s8::ModDst) n (slots[k][1]), f (slots[k][2]) };
+
+    auto& fx = (&layer == &synth.upper ? synth.upperFx : synth.lowerFx).p;
+    fx.driveOn = b ("fx_drive_on"); fx.drive = f ("fx_drive"); fx.driveTone = f ("fx_drive_tone"); fx.driveMix = f ("fx_drive_mix");
+    fx.chorusOn = b ("fx_chorus_on"); fx.chorusMode = n ("fx_chorus_mode"); fx.chorusMix = f ("fx_chorus_mix");
+    fx.phaserOn = b ("fx_phaser_on"); fx.phaserRate = f ("fx_phaser_rate"); fx.phaserDepth = f ("fx_phaser_depth");
+    fx.phaserFeedback = f ("fx_phaser_fb"); fx.phaserMix = f ("fx_phaser_mix");
+    fx.delayOn = b ("fx_delay_on"); fx.delaySync = b ("fx_delay_sync"); fx.delayDiv = n ("fx_delay_div"); fx.delayMs = f ("fx_delay_ms");
+    fx.delayFeedback = f ("fx_delay_fb"); fx.delayDamp = f ("fx_delay_damp"); fx.delayMix = f ("fx_delay_mix"); fx.pingPong = b ("fx_delay_pp");
+
     // Cambiar de modo de asignación suelta todo para empezar limpio.
     if (assign != last) { if (last >= 0) layer.allNotesOff(); last = assign; }
 }
@@ -138,6 +161,10 @@ void Saturno8Processor::readGlobal()
     g.driftOn = b ("drift_on"); g.condition = (s8::Condition) n ("condition");
     g.driftVco = f ("drift_vco"); g.driftVcf = f ("drift_vcf"); g.driftVca = f ("drift_vca"); g.envSlop = f ("env_slop");
     g.volume = f ("master"); g.tune = f ("tune"); g.limiter = b ("limiter");
+    auto& gf = synth.globalFx.p;
+    gf.eqOn = b ("eq_on"); gf.eqLow = f ("eq_low"); gf.eqHigh = f ("eq_high");
+    gf.reverbOn = b ("rv_on"); gf.reverbSize = f ("rv_size"); gf.reverbDamp = f ("rv_damp");
+    gf.reverbPredelay = f ("rv_predelay"); gf.reverbMix = f ("rv_mix");
 }
 
 void Saturno8Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -195,6 +222,7 @@ void Saturno8Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             else if (msg.isAllNotesOff() || msg.isAllSoundOff()) synth.allNotesOff();
             else if (msg.isPitchWheel()) { synth.setPitchBend ((float) (msg.getPitchWheelValue() - 8192) / 8192.0f); controlsChanged = true; }
             else if (msg.isControllerOfType (1)) { synth.setModWheel ((float) msg.getControllerValue() / 127.0f); controlsChanged = true; }
+            else if (msg.isChannelPressure()) { synth.setAftertouch ((float) msg.getChannelPressureValue() / 127.0f); controlsChanged = true; }
         }
         if (controlsChanged) synth.updatePlay();
 

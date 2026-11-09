@@ -12,18 +12,25 @@ const std::vector<std::vector<const char*>> kLayerRows {
     { "ENV-1", "ENV-2", "LFO" },
     { "Asignación", "Arpegiador" },
 };
+const std::vector<std::vector<const char*>> kFxRows {
+    { "Distorsión", "Chorus", "Phaser" },
+    { "Delay" },
+    { "Matriz" },
+};
 const std::vector<std::vector<const char*>> kGlobalRows {
     { "Teclado", "Máster" },
-    { "Bender", "Portamento" },
-    { "Deriva" },
+    { "Bender", "Portamento", "Ecualizador" },
+    { "Deriva", "Reverb" },
 };
 
 juce::String utf8 (const char* s) { return juce::String (juce::CharPointer_UTF8 (s)); }
 // Celdas que ocupa un control (los desplegables con textos largos ocupan dos).
-int cellsFor (const s8::ParamDef& d)
+float cellsFor (const s8::ParamDef& d)
 {
     const juce::String id (d.id);
-    return id == "key_mode" || id == "condition" ? 2 : 1;
+    if (id == "key_mode" || id == "condition") return 2.0f;
+    if (id.endsWith ("_src") || id.endsWith ("_dst")) return 1.5f;
+    return 1.0f;
 }
 } // namespace
 
@@ -79,12 +86,15 @@ Saturno8Editor::Saturno8Editor (Saturno8Processor& p)
     for (auto& gr : grids) addChildComponent (gr);
     grids[1].setColour (kLower);
     build (s8::layerParamDefs(), layerControls);
+    build (s8::layerFxParamDefs(), fxControls);
     build (s8::globalParamDefs(), globalControls);
     for (auto& c : globalControls) c->attach (proc.apvts, c->def->id);
 
     tabs.addTab ("Capa superior", kPanel, 0);
     tabs.addTab ("Capa inferior", kPanel, 1);
-    tabs.addTab ("Global", kPanel, 2);
+    tabs.addTab ("Efectos sup.", kPanel, 2);
+    tabs.addTab ("Efectos inf.", kPanel, 3);
+    tabs.addTab ("Global", kPanel, 4);
     addAndMakeVisible (tabs);
 
     chordButton.setTooltip ("Mantén pulsadas las notas del acorde y pulsa aquí");
@@ -105,23 +115,24 @@ Saturno8Editor::Saturno8Editor (Saturno8Processor& p)
 
 void Saturno8Editor::showPage (int newPage)
 {
-    page = juce::jlimit (0, 2, newPage);
+    page = juce::jlimit (0, 4, newPage);
     if (tabs.getCurrentTabIndex() != page) tabs.setCurrentTabIndex (page, false);
-    const bool isLayer = page < 2;
-    const juce::Colour colour = page == 1 ? kLower : kAccent;
-    for (auto& c : layerControls)
+    const bool isLayer = page < 2, isFx = page == 2 || page == 3;
+    const int layer = isFx ? page - 2 : page;
+    const juce::Colour colour = (isLayer || isFx) && layer == 1 ? kLower : kAccent;
+    auto show = [&] (std::vector<std::unique_ptr<Control>>& list, bool visible, bool attachToLayer)
     {
-        if (isLayer) c->attach (proc.apvts, Saturno8Processor::pid (Saturno8Processor::kPrefix[page], c->def->id));
-        if (auto* s = dynamic_cast<juce::Slider*> (c->comp.get())) s->setColour (juce::Slider::rotarySliderFillColourId, colour);
-        c->comp->setVisible (isLayer);
-        c->label.setVisible (isLayer);
-    }
-    for (auto& c : globalControls)
-    {
-        if (auto* s = dynamic_cast<juce::Slider*> (c->comp.get())) s->setColour (juce::Slider::rotarySliderFillColourId, kAccent);
-        c->comp->setVisible (! isLayer);
-        c->label.setVisible (! isLayer);
-    }
+        for (auto& c : list)
+        {
+            if (visible && attachToLayer) c->attach (proc.apvts, Saturno8Processor::pid (Saturno8Processor::kPrefix[layer], c->def->id));
+            if (auto* sl = dynamic_cast<juce::Slider*> (c->comp.get())) sl->setColour (juce::Slider::rotarySliderFillColourId, colour);
+            c->comp->setVisible (visible);
+            c->label.setVisible (visible);
+        }
+    };
+    show (layerControls, isLayer, true);
+    show (fxControls, isFx, true);
+    show (globalControls, page == 4, false);
     chordButton.setVisible (isLayer);
     grids[0].setVisible (page == 0);
     grids[1].setVisible (page == 1);
@@ -138,9 +149,9 @@ void Saturno8Editor::paint (juce::Graphics& g)
     g.drawText ("SATURNO 8", kMargin, 12, 300, 32, juce::Justification::left);
     g.setFont (juce::FontOptions (12.0f));
     g.setColour (kInk.withAlpha (0.55f));
-    g.drawText (utf8 ("Fase 4: dos capas con arpegiador y secuenciador"), kMargin + 170, 22, 500, 18, juce::Justification::left);
+    g.drawText (utf8 ("Fase 5: efectos por capa y globales, y matriz de modulación"), kMargin + 170, 22, 500, 18, juce::Justification::left);
 
-    const juce::Colour colour = page == 1 ? kLower : kAccent;
+    const juce::Colour colour = page == 1 || page == 3 ? kLower : kAccent;
     for (auto& [name, box] : sectionBoxes)
     {
         auto r = box.toFloat();
@@ -174,7 +185,7 @@ void Saturno8Editor::layoutRows (const Rows& rows, std::vector<std::unique_ptr<C
             for (auto& c : controls)
             {
                 if (c->section != section) continue;
-                const int w = cellsFor (*c->def) * kCell;
+                const int w = juce::roundToInt (cellsFor (*c->def) * (float) kCell);
                 auto cell = juce::Rectangle<int> (cx, y + 38, w, kCellH - 14);
                 c->label.setBounds (cx, y + 20, w, 16);
                 if (dynamic_cast<juce::Slider*> (c->comp.get()) != nullptr) c->comp->setBounds (cell.reduced (4, 0));
@@ -192,9 +203,10 @@ void Saturno8Editor::layoutRows (const Rows& rows, std::vector<std::unique_ptr<C
 void Saturno8Editor::resized()
 {
     sectionBoxes.clear();
-    tabs.setBounds (kMargin, kHeader, 420, kTabsH);
+    tabs.setBounds (kMargin, kHeader, 640, kTabsH);
     const int top = kHeader + kTabsH + 8;
     if (page < 2) layoutRows (kLayerRows, layerControls, top);
+    else if (page < 4) layoutRows (kFxRows, fxControls, top);
     else layoutRows (kGlobalRows, globalControls, top);
 
     const int gridTop = top + kLayerRowsCount * kRowH;

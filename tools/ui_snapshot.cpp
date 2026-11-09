@@ -1,5 +1,5 @@
 // Genera una captura PNG de la interfaz sin abrir ventanas (para documentación y revisión).
-// Uso: ui_snapshot <salida.png> [página 0 superior|1 inferior|2 global] [escala]
+// Uso: ui_snapshot <salida.png> [página 0 superior|1 inferior|2 efectos sup.|3 efectos inf.|4 global] [escala]
 #include <JuceHeader.h>
 #include "../src/PluginProcessor.h"
 #include "../src/PluginEditor.h"
@@ -25,6 +25,12 @@ int main (int argc, char** argv)
         for (int i = 0; i < 12; ++i)
             proc.steps[1].set (i, { notes[i], i != 5, i == 8, i % 4 == 0 });
     }
+    // Unos efectos y una ranura de la matriz, para la captura.
+    for (auto* id : { "u_fx_chorus_on", "u_fx_delay_on", "rv_on" })
+        if (auto* p = proc.apvts.getParameter (id)) p->setValueNotifyingHost (1.0f);
+    if (auto* p = proc.apvts.getParameter ("u_mod1_src")) p->setValueNotifyingHost (p->convertTo0to1 (4));
+    if (auto* p = proc.apvts.getParameter ("u_mod1_dst")) p->setValueNotifyingHost (p->convertTo0to1 (8));
+    if (auto* p = proc.apvts.getParameter ("u_mod1_amt")) p->setValueNotifyingHost (p->convertTo0to1 (0.4f));
     // Un acorde de prueba: comprueba también que el procesador suena.
     juce::AudioBuffer<float> buf (2, 512);
     juce::MidiBuffer midi;

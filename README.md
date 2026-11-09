@@ -25,7 +25,7 @@ En Windows copia `Saturno 8.vst3` a `C:\Program Files\Common Files\VST3\`.
 2. Motor de voz y polifonía (hecho)
 3. Capas superior e inferior, interpretación y deriva analógica (hecho)
 4. Arpegiador y secuenciador (hecho)
-5. Efectos y matriz de modulación
+5. Efectos y matriz de modulación (hecho)
 6. Interfaz gráfica
 7. Presets, MIDI learn y oversampling
 
@@ -84,3 +84,19 @@ Cada capa tiene su propio reproductor, con tres modos: *Apagado*, *Arpegiador* o
 - **Tempo**: con el DAW en marcha sigue su tempo y su rejilla; parado o en la app standalone usa el tempo propio (sección Máster) y la primera tecla marca el tiempo.
 
 En el panel, la rejilla **Secuencia** de cada capa: clic en el LED para paso o silencio, arrastrar o rueda sobre la nota para los semitonos (doble clic = 0), **L** para ligadura y **A** para acento. El paso que suena se ilumina.
+
+## Efectos y matriz de modulación (fase 5)
+
+Tres cadenas de efectos: una por capa y otra global, en este orden: capa → efectos de la capa → balance → efectos globales → volumen → limitador.
+
+- **Por capa** (pestañas *Efectos sup.* y *Efectos inf.*):
+  - **Distorsión**: drive con recorte suave asimétrico, tono y mezcla.
+  - **Chorus** de dos líneas tipo BBD en contrafase, modos I, II e I+II (este último rápido y poco profundo, tipo vibrato).
+  - **Phaser** estéreo de 4 etapas: velocidad, profundidad, realimentación y mezcla.
+  - **Delay**: al tempo (1/16 a 1/2 con puntillos y tresillos) o libre (20–2000 ms), realimentación, apagado de agudos en la repetición, mezcla y ping-pong.
+- **Globales** (pestaña *Global*): **ecualizador** de graves (140 Hz) y agudos (5 kHz) de ±12 dB y **reverb** con tamaño, apagado, predelay y mezcla.
+- **Matriz de modulación** por capa, 4 ranuras: fuente → destino con cantidad bipolar (±100 %).
+  - Fuentes: LFO, ENV-1, ENV-2, velocidad, teclado, rueda, aftertouch, bender y un valor al azar por nota.
+  - Destinos: tono (los dos VCO o cada uno, ±24 st), ancho de pulso, cruzada, nivel de VCO-2, paso alto, corte (±5 octavas), resonancia, nivel y panorama.
+
+![Efectos y matriz](docs/interfaz_efectos.png)

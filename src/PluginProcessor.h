@@ -5,7 +5,7 @@
 #include <unordered_map>
 
 // Saturno 8: sintetizador polifónico analógico modelado (diseño propio).
-// Fase 4: dos capas de 16 voces con arpegiador o secuenciador de pasos cada una.
+// Fase 5: dos capas con arpegiador o secuenciador, efectos por capa y globales, y matriz de modulación.
 class Saturno8Processor : public juce::AudioProcessor
 {
 public:
@@ -24,7 +24,7 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 2.0; }
+    double getTailLengthSeconds() const override { return 8.0; }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }

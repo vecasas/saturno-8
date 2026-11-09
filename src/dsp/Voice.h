@@ -15,6 +15,12 @@ enum class LfoWave { Sine, Triangle, Saw, Square, Random };
 enum class ModDest { Vco1, Vco2, Both };
 enum class PwmSrc { Lfo, Env1 };
 
+// Matriz de modulación: 4 ranuras por capa, fuente -> destino con cantidad bipolar.
+enum class ModSrc { None, Lfo, Env1, Env2, Velocity, Key, Wheel, Aftertouch, Bend, Random, Count };
+enum class ModDst { None, Pitch, Pitch1, Pitch2, PulseWidth, CrossMod, Vco2Level, Hpf, Cutoff, Resonance, Level, Pan, Count };
+constexpr int kModSlots = 4;
+struct ModSlot { ModSrc src = ModSrc::None; ModDst dst = ModDst::None; float amount = 0; };   // amount -1..1
+
 // Parámetros de una capa (los comparten todas sus voces). Rangos en unidades reales.
 struct LayerParams
 {
@@ -65,6 +71,8 @@ struct LayerParams
     float lfoRate = 4.0f;       // Hz
     float lfoDelay = 0.0f;      // s (fundido de entrada desde la primera nota)
     LfoWave lfoWave = LfoWave::Triangle;
+
+    std::array<ModSlot, kModSlots> matrix {};
 };
 
 // ADSR analógica: ataque hacia un objetivo por encima de 1, caídas exponenciales.
@@ -136,6 +144,7 @@ struct PlayParams
     float glide = 0;                    // s (0 = sin portamento)
     float driftVco = 0, driftVcf = 0, driftVca = 0, envSlop = 0;   // 0..1
     float tuneSt = 0;                   // afinación general en semitonos
+    float wheel = 0, aftertouch = 0, bend = 0;   // valores en bruto para la matriz (0..1, 0..1, -1..1)
 };
 
 // Valores que cambian por voz además de la nota (unísono, desafinación).
@@ -172,6 +181,7 @@ public:
         if (fromPitch >= 0) pitch = fromPitch;
         else if (! wasActive || retrigger) pitch = target;
         vel = velocity;
+        randomValue = drift.next();
         slopA = 1.0f + 0.3f * drift.next(); slopD = 1.0f + 0.3f * drift.next(); slopR = 1.0f + 0.3f * drift.next();
         gate = true;
         age = stamp;
@@ -221,11 +231,34 @@ public:
                          * (1.0f - p.vel2 + p.vel2 * vel);
         const float e1m = p.env1Invert ? -e1 : e1;
 
+        // Matriz de modulación
+        std::array<float, (size_t) ModDst::Count> md {};
+        for (auto& slot : p.matrix)
+        {
+            if (slot.src == ModSrc::None || slot.dst == ModDst::None || slot.amount == 0.0f) continue;
+            float v = 0;
+            switch (slot.src)
+            {
+                case ModSrc::Lfo: v = lfo; break;
+                case ModSrc::Env1: v = e1; break;
+                case ModSrc::Env2: v = e2; break;
+                case ModSrc::Velocity: v = vel; break;
+                case ModSrc::Key: v = (pitch - 60.0f) / 36.0f; break;
+                case ModSrc::Wheel: v = pp.wheel; break;
+                case ModSrc::Aftertouch: v = pp.aftertouch; break;
+                case ModSrc::Bend: v = pp.bend; break;
+                case ModSrc::Random: v = randomValue; break;
+                case ModSrc::None: case ModSrc::Count: break;
+            }
+            md[(size_t) slot.dst] += v * slot.amount;
+        }
+        auto M = [&md] (ModDst d) { return md[(size_t) d]; };
+
         // Tono de los osciladores
         const float base = pitch + offs.detuneSt + pp.tuneSt;
         const float modSt = (p.vcoLfo * 12.0f + pp.wheelVco) * lfo + p.vcoEnv * 24.0f * e1m;
-        const float tune1 = pp.bendVco1 + pp.driftVco * 0.2f * dr (0);   // hasta ±20 cents
-        const float tune2 = pp.bendVco2 + pp.driftVco * 0.2f * dr (1);
+        const float tune1 = pp.bendVco1 + pp.driftVco * 0.2f * dr (0) + 24.0f * (M (ModDst::Pitch) + M (ModDst::Pitch1));   // deriva hasta ±20 cents
+        const float tune2 = pp.bendVco2 + pp.driftVco * 0.2f * dr (1) + 24.0f * (M (ModDst::Pitch) + M (ModDst::Pitch2));
         const bool m1 = p.vcoModDest != ModDest::Vco2, m2 = p.vcoModDest != ModDest::Vco1;
         const float oct1 = 12.0f * (float) (1 - p.vco1Range);
         const float oct2 = 12.0f * (float) (1 - p.vco2Range);
@@ -235,13 +268,14 @@ public:
 
         // Ancho de pulso
         const float pwmSrc = p.pwmSrc == PwmSrc::Lfo ? 0.5f + 0.5f * lfo : e1;
-        const float width = std::clamp (0.5f - 0.45f * std::clamp (p.pulseWidth + p.pwmAmount * pwmSrc, 0.0f, 1.0f), 0.05f, 0.5f);
+        const float width = std::clamp (0.5f - 0.45f * std::clamp (p.pulseWidth + p.pwmAmount * pwmSrc + M (ModDst::PulseWidth), 0.0f, 1.0f), 0.05f, 0.5f);
 
         // VCO-2 primero (es el modulador de la modulación cruzada)
         const float dt2 = f2 / sr;
         const float o2 = osc2 (p.vco2Wave, dt2, width);
 
-        const float xm = p.crossMod * p.crossMod * 4.0f * o2;   // octavas
+        const float xmAmt = std::clamp (p.crossMod + M (ModDst::CrossMod), 0.0f, 1.0f);
+        const float xm = xmAmt * xmAmt * 4.0f * o2;   // octavas
         float f1 = noteToHz (base - oct1 + tune1 + (m1 ? modSt : 0.0f)) * std::exp2 (xm);
         f1 = std::min (f1, sr * 0.45f);
         const float dt1 = f1 / sr;
@@ -251,29 +285,32 @@ public:
             ph2 = (ph1 / dt1) * dt2;   // VCO-2 esclavo de VCO-1
 
         // Un soplo de ruido de fondo, como en un circuito real: permite que el filtro autooscile.
-        float x = 0.6f * (o1 * p.vco1Level + o2 * p.vco2Level) + 1.0e-4f * noise.next();
+        float x = 0.6f * (o1 * p.vco1Level + o2 * std::clamp (p.vco2Level + M (ModDst::Vco2Level), 0.0f, 1.0f)) + 1.0e-4f * noise.next();
 
         // Filtro paso alto (sin resonancia)
-        if (p.hpf > 0.001f) x = hp.process (x, tptG (20.0f * std::exp2 (p.hpf * 6.64f), sr));
+        const float hpfAmt = std::clamp (p.hpf + M (ModDst::Hpf), 0.0f, 1.0f);
+        if (hpfAmt > 0.001f) x = hp.process (x, tptG (20.0f * std::exp2 (hpfAmt * 6.64f), sr));
 
         // Filtro paso bajo
         const float envSrc = p.vcfEnv2 ? e2 : e1m;
         const float cutOct = p.cutoff * 9.97f + p.vcfEnv * 8.0f * envSrc + (p.vcfLfo * 3.0f + pp.wheelVcf) * lfo
-                           + p.keyFollow * keyFromC4 + pp.bendVcf + pp.driftVcf * 0.25f * dr (2);
+                           + p.keyFollow * keyFromC4 + pp.bendVcf + pp.driftVcf * 0.25f * dr (2) + 5.0f * M (ModDst::Cutoff);
+        const float reso = std::clamp (p.resonance + M (ModDst::Resonance), 0.0f, 1.0f);
         const float g = tptG (20.0f * std::exp2 (cutOct), sr);
         float y;
         if (p.slope24)
         {
-            const float k = 4.1f * p.resonance;
+            const float k = 4.1f * reso;
             y = ladder.process (x * 0.9f, g, k) * (1.0f + 0.6f * k);
         }
         else
-            y = lp12.lowpass (x, g, 2.0f * (1.0f - 0.985f * p.resonance));
+            y = lp12.lowpass (x, g, 2.0f * (1.0f - 0.985f * reso));
 
         // VCA
-        const float amp = 0.5f * e2 * p.level * (1.0f + pp.driftVca * 0.12f * dr (3)) * (1.0f - 0.5f * p.vcaLfo * (1.0f - lfo));
+        const float amp = 0.5f * e2 * p.level * (1.0f + pp.driftVca * 0.12f * dr (3)) * (1.0f - 0.5f * p.vcaLfo * (1.0f - lfo))
+                        * std::clamp (1.0f + M (ModDst::Level), 0.0f, 2.0f);
         y *= amp * offs.gain;
-        const float pan = std::clamp (offs.pan, -1.0f, 1.0f);
+        const float pan = std::clamp (offs.pan + M (ModDst::Pan), -1.0f, 1.0f);
         l += y * std::sqrt (0.5f * (1.0f - pan));
         r += y * std::sqrt (0.5f * (1.0f + pan));
     }
@@ -326,6 +363,7 @@ private:
     Noise drift;
     bool gate = false;
     uint64_t age = 0;
+    float randomValue = 0;
     float ph1 = 0, ph2 = 0;
     Adsr env1, env2;
     Svf lp12;
