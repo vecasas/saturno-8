@@ -5,6 +5,7 @@
 // Sin dependencias de JUCE, para poder probarlo y renderizarlo fuera del plugin.
 
 #include "DspUtils.h"
+#include <array>
 
 namespace s8
 {
@@ -125,36 +126,60 @@ struct Lfo
     }
 };
 
+// Controles de interpretación de la capa: bender, rueda de modulación, portamento y deriva.
+struct PlayParams
+{
+    float bendVco1 = 0, bendVco2 = 0;   // semitonos ya escalados por el bender
+    float bendVcf = 0;                  // octavas
+    float wheelVco = 0;                 // semitonos de LFO añadidos por la rueda
+    float wheelVcf = 0;                 // octavas de LFO añadidas por la rueda
+    float glide = 0;                    // s (0 = sin portamento)
+    float driftVco = 0, driftVcf = 0, driftVca = 0, envSlop = 0;   // 0..1
+    float tuneSt = 0;                   // afinación general en semitonos
+};
+
 // Valores que cambian por voz además de la nota (unísono, desafinación).
 struct VoiceOffsets
 {
     float detuneSt = 0;   // semitonos
     float pan = 0;        // -1..1
+    float gain = 1;       // fundido entre capas en modo división
 };
 
 class Voice
 {
 public:
     void setSampleRate (float newSr) { sr = newSr; }
-    void setSeed (uint32_t seed) { noise = Noise (seed); }
-
-    void start (int midiNote, float velocity, bool retrigger, uint64_t stamp)
+    void setSeed (uint32_t seed)
     {
+        noise = Noise (seed);
+        drift = Noise (seed ^ 0xa5a5a5a5u);
+        // Tolerancia fija de cada voz (componentes que no son idénticos).
+        for (auto& t : tol) t = drift.next();
+    }
+
+    // fromPitch >= 0: la voz arranca en ese tono y se desliza hasta la nota (portamento).
+    void start (int midiNote, float velocity, bool retrigger, uint64_t stamp, float fromPitch = -1)
+    {
+        const bool wasActive = active();
         if (! active())
         {
             ph1 = 0; ph2 = 0;
             lp12.reset(); ladder.reset(); hp.reset();
         }
         note = midiNote;
-        pitch = (float) midiNote;
+        target = (float) midiNote;
+        if (fromPitch >= 0) pitch = fromPitch;
+        else if (! wasActive || retrigger) pitch = target;
         vel = velocity;
+        slopA = 1.0f + 0.3f * drift.next(); slopD = 1.0f + 0.3f * drift.next(); slopR = 1.0f + 0.3f * drift.next();
         gate = true;
         age = stamp;
         env1.gateOn (retrigger);
         env2.gateOn (retrigger);
     }
     // Cambio de nota sin redisparar (legato en modo solo).
-    void glideTo (int midiNote) { note = midiNote; pitch = (float) midiNote; }
+    void glideTo (int midiNote) { note = midiNote; target = (float) midiNote; }
     void release (uint64_t stamp) { if (gate) { gate = false; age = stamp; env1.gateOff(); env2.gateOff(); } }
     void kill() { gate = false; env1.kill(); env2.kill(); }
 
@@ -166,25 +191,46 @@ public:
     VoiceOffsets offs;
 
     // lfo: salida del LFO de la capa (-1..1). Suma el resultado a l y r.
-    void process (const LayerParams& p, float lfo, float& l, float& r)
+    float currentPitch() const { return pitch; }
+
+    void process (const LayerParams& p, const PlayParams& pp, float lfo, float& l, float& r)
     {
         if (! active()) return;
 
+        // Portamento: el tono se acerca a la nota de forma exponencial.
+        if (pp.glide > 0.0005f) pitch += (target - pitch) * (1.0f - std::exp (-1.0f / (pp.glide * 0.35f * sr)));
+        else pitch = target;
+
+        // Deriva analógica: un paseo aleatorio lento por voz, más la tolerancia fija de la voz.
+        if (--driftCount <= 0)
+        {
+            driftCount = (int) (sr * (0.4f + 0.6f * std::abs (drift.next())));
+            for (auto& t : driftTarget) t = drift.next();
+        }
+        const float dc = 1.0f / (0.8f * sr);
+        for (size_t i = 0; i < driftNow.size(); ++i) driftNow[i] += (driftTarget[i] - driftNow[i]) * dc;
+        auto dr = [this] (size_t i) { return 0.6f * driftNow[i] + 0.4f * tol[i]; };
+        const float slop = pp.envSlop;
+
         const float keyFromC4 = (pitch - 60.0f) / 12.0f;
-        const float e1 = env1.process (p.a1, p.d1, p.s1, p.r1, std::exp2 (-keyFromC4 * p.key1 * 1.5f), sr)
+        const float e1 = env1.process (p.a1 * (1 + slop * (slopA - 1)), p.d1 * (1 + slop * (slopD - 1)), p.s1, p.r1 * (1 + slop * (slopR - 1)),
+                                       std::exp2 (-keyFromC4 * p.key1 * 1.5f), sr)
                          * (1.0f - p.vel1 + p.vel1 * vel);
-        const float e2 = env2.process (p.a2, p.d2, p.s2, p.r2, std::exp2 (-keyFromC4 * p.key2 * 1.5f), sr)
+        const float e2 = env2.process (p.a2 * (1 + slop * (slopA - 1)), p.d2 * (1 + slop * (slopD - 1)), p.s2, p.r2 * (1 + slop * (slopR - 1)),
+                                       std::exp2 (-keyFromC4 * p.key2 * 1.5f), sr)
                          * (1.0f - p.vel2 + p.vel2 * vel);
         const float e1m = p.env1Invert ? -e1 : e1;
 
         // Tono de los osciladores
-        const float base = pitch + offs.detuneSt;
-        const float modSt = p.vcoLfo * 12.0f * lfo + p.vcoEnv * 24.0f * e1m;
+        const float base = pitch + offs.detuneSt + pp.tuneSt;
+        const float modSt = (p.vcoLfo * 12.0f + pp.wheelVco) * lfo + p.vcoEnv * 24.0f * e1m;
+        const float tune1 = pp.bendVco1 + pp.driftVco * 0.2f * dr (0);   // hasta ±20 cents
+        const float tune2 = pp.bendVco2 + pp.driftVco * 0.2f * dr (1);
         const bool m1 = p.vcoModDest != ModDest::Vco2, m2 = p.vcoModDest != ModDest::Vco1;
         const float oct1 = 12.0f * (float) (1 - p.vco1Range);
         const float oct2 = 12.0f * (float) (1 - p.vco2Range);
         float f2 = p.vco2Low ? 0.3f * std::exp2 ((p.vco2Fine + 12.0f * (float) p.vco2Range) / 12.0f)
-                             : noteToHz (base - oct2 + p.vco2Fine + (m2 ? modSt : 0.0f));
+                             : noteToHz (base - oct2 + p.vco2Fine + tune2 + (m2 ? modSt : 0.0f));
         f2 = std::min (f2, sr * 0.45f);
 
         // Ancho de pulso
@@ -196,7 +242,7 @@ public:
         const float o2 = osc2 (p.vco2Wave, dt2, width);
 
         const float xm = p.crossMod * p.crossMod * 4.0f * o2;   // octavas
-        float f1 = noteToHz (base - oct1 + (m1 ? modSt : 0.0f)) * std::exp2 (xm);
+        float f1 = noteToHz (base - oct1 + tune1 + (m1 ? modSt : 0.0f)) * std::exp2 (xm);
         f1 = std::min (f1, sr * 0.45f);
         const float dt1 = f1 / sr;
         const bool wrapped = ph1 + dt1 >= 1.0f;
@@ -212,8 +258,8 @@ public:
 
         // Filtro paso bajo
         const float envSrc = p.vcfEnv2 ? e2 : e1m;
-        const float cutOct = p.cutoff * 9.97f + p.vcfEnv * 8.0f * envSrc + p.vcfLfo * 3.0f * lfo
-                           + p.keyFollow * keyFromC4;
+        const float cutOct = p.cutoff * 9.97f + p.vcfEnv * 8.0f * envSrc + (p.vcfLfo * 3.0f + pp.wheelVcf) * lfo
+                           + p.keyFollow * keyFromC4 + pp.bendVcf + pp.driftVcf * 0.25f * dr (2);
         const float g = tptG (20.0f * std::exp2 (cutOct), sr);
         float y;
         if (p.slope24)
@@ -225,8 +271,8 @@ public:
             y = lp12.lowpass (x, g, 2.0f * (1.0f - 0.985f * p.resonance));
 
         // VCA
-        const float amp = 0.5f * e2 * p.level * (1.0f - 0.5f * p.vcaLfo * (1.0f - lfo));
-        y *= amp;
+        const float amp = 0.5f * e2 * p.level * (1.0f + pp.driftVca * 0.12f * dr (3)) * (1.0f - 0.5f * p.vcaLfo * (1.0f - lfo));
+        y *= amp * offs.gain;
         const float pan = std::clamp (offs.pan, -1.0f, 1.0f);
         l += y * std::sqrt (0.5f * (1.0f - pan));
         r += y * std::sqrt (0.5f * (1.0f + pan));
@@ -273,7 +319,11 @@ private:
 
     float sr = 48000;
     int note = 60;
-    float pitch = 60, vel = 1;
+    float pitch = 60, target = 60, vel = 1;
+    float slopA = 1, slopD = 1, slopR = 1;
+    int driftCount = 0;
+    std::array<float, 4> tol {}, driftNow {}, driftTarget {};
+    Noise drift;
     bool gate = false;
     uint64_t age = 0;
     float ph1 = 0, ph2 = 0;

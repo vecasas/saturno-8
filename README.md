@@ -23,7 +23,7 @@ En Windows copia `Saturno 8.vst3` a `C:\Program Files\Common Files\VST3\`.
 
 1. Esqueleto + CI (hecho)
 2. Motor de voz y polifonía (hecho)
-3. Capas superior e inferior, interpretación y deriva analógica
+3. Capas superior e inferior, interpretación y deriva analógica (hecho)
 4. Arpegiador y secuenciador
 5. Efectos y matriz de modulación
 6. Interfaz gráfica
@@ -56,6 +56,20 @@ También: pedal de sostenido (CC 64), «Voces poli» limita la polifonía, y la 
 
 La interfaz de esta fase es un panel funcional; la definitiva llega en la fase 6.
 
-`render_demo <carpeta>` genera seis sonidos de ejemplo en WAV (metales, pad PWM, bajo solo, lead sync en unísono, campanas con cruzada y memoria de acorde) y mide cuántas veces más rápido que el tiempo real calcula el motor.
+`render_demo <carpeta>` genera sonidos de ejemplo en WAV (metales, pad PWM, bajo solo, lead sync en unísono, campanas con cruzada, memoria de acorde y, desde la fase 3, las dos capas en división) y mide cuántas veces más rápido que el tiempo real calcula el motor.
 
 Pruebas: `ctest --test-dir build -C Release`. Captura sin ventana: `cmake -B build -DS8_UI_SNAPSHOT=ON && cmake --build build --target ui_snapshot`.
+
+## Capas, interpretación y deriva (fase 3)
+
+Dos capas completas, **superior** e **inferior**, de 16 voces cada una y con todos sus parámetros propios (osciladores, filtros, envolventes, LFO y asignación). En el panel se elige qué capa se edita con las pestañas.
+
+- **Teclado**: *Entera* (solo la superior), *Doble* (las dos apiladas), *División* (la inferior por debajo del punto de división y la superior desde él) y *División con fundido* (una octava de transición en la que suenan las dos). **Balance** entre capas y **pedal de sostenido** activable por capa.
+- **Bender**: rango en semitonos hacia VCO-1, VCO-2 o ambos, barrido del filtro, y a qué capas afecta (superior, ambas o inferior). La **rueda de modulación** añade LFO al tono y al filtro.
+- **Portamento**: tiempo de 0 a 5 s y capas a las que se aplica. En modo poli cada voz nueva sale de la última nota tocada; en solo y unísono se desliza en legato.
+- **Deriva analógica**: cada voz tiene su propia tolerancia y un paseo lento al azar en la afinación de los VCO, el corte del VCF y el nivel del VCA, y variaciones en los tiempos de las envolventes. El **estado** del instrumento escala todo: *Recién salido*, *De estudio*, *De gira*, *Veterano* y *Al taller*. Para FM cruzada bien afinada, mejor con la deriva apagada.
+- **Máster**: volumen, afinación general (±100 cents) y **limitador** de picos.
+- MIDI: pitch bend, rueda de modulación (CC 1), sostenido (CC 64) y todas las notas fuera.
+
+![Capa inferior](docs/interfaz_inferior.png)
+![Global](docs/interfaz_global.png)

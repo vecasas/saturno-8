@@ -2,7 +2,7 @@
 // Tabla de parámetros de una capa. La usan el procesador (crear y leer) y la
 // interfaz (dibujar cada sección). Los ID llevan el prefijo de la capa ("u_").
 #include <JuceHeader.h>
-#include "dsp/Layer.h"
+#include "dsp/Synth.h"
 
 namespace s8
 {
@@ -79,6 +79,42 @@ inline const std::vector<ParamDef>& layerParamDefs()
         { "uni_voices", "Voces uní.", "Asignación", PType::Int, 1, 16, 4, 1, nullptr },
         { "uni_detune", "Desafinar", "Asignación", PType::Float, 0, 1, 0.3f, 1, nullptr },
         { "poly_voices", "Voces poli", "Asignación", PType::Int, 1, 16, 16, 1, nullptr },
+    };
+    return defs;
+}
+
+// Parámetros globales (sin prefijo).
+inline const std::vector<ParamDef>& globalParamDefs()
+{
+    static const std::vector<ParamDef> defs {
+        // Teclado y capas
+        { "key_mode",   "Modo",       "Teclado", PType::Choice, 0, 3, 0, 1, "Entera|Doble|División|División con fundido" },
+        { "split",      "División",   "Teclado", PType::Int, 24, 96, 60, 1, nullptr },
+        { "balance",    "Balance",    "Teclado", PType::Float, -1, 1, 0, 1, nullptr },
+        { "sus_upper",  "Pedal sup.", "Teclado", PType::Bool, 0, 1, 1, 1, nullptr },
+        { "sus_lower",  "Pedal inf.", "Teclado", PType::Bool, 0, 1, 1, 1, nullptr },
+        // Bender y rueda de modulación
+        { "bend_range", "Bender VCO", "Bender", PType::Float, 0, 12, 2, 1, nullptr },
+        { "bend_dest",  "Destino",    "Bender", PType::Choice, 0, 2, 2, 1, "VCO-1|VCO-2|Ambos" },
+        { "bend_vcf",   "Bender VCF", "Bender", PType::Float, 0, 1, 0, 1, nullptr },
+        { "bend_target", "Capas",     "Bender", PType::Choice, 0, 2, 1, 1, "Superior|Ambas|Inferior" },
+        { "wheel_vco",  "Rueda VCO",  "Bender", PType::Float, 0, 1, 0.3f, 1, nullptr },
+        { "wheel_vcf",  "Rueda VCF",  "Bender", PType::Float, 0, 1, 0, 1, nullptr },
+        // Portamento
+        { "porta_on",   "Activo",     "Portamento", PType::Bool, 0, 1, 0, 1, nullptr },
+        { "porta",      "Tiempo",     "Portamento", PType::Float, 0, 5, 0.15f, 0.35f, nullptr },
+        { "porta_target", "Capas",    "Portamento", PType::Choice, 0, 2, 1, 1, "Superior|Ambas|Inferior" },
+        // Deriva analógica
+        { "drift_on",   "Activa",     "Deriva", PType::Bool, 0, 1, 0, 1, nullptr },
+        { "condition",  "Estado",     "Deriva", PType::Choice, 0, 4, 1, 1, "Recién salido|De estudio|De gira|Veterano|Al taller" },
+        { "drift_vco",  "VCO",        "Deriva", PType::Float, 0, 1, 0.3f, 1, nullptr },
+        { "drift_vcf",  "VCF",        "Deriva", PType::Float, 0, 1, 0.3f, 1, nullptr },
+        { "drift_vca",  "VCA",        "Deriva", PType::Float, 0, 1, 0.3f, 1, nullptr },
+        { "env_slop",   "Envolventes", "Deriva", PType::Float, 0, 1, 0.3f, 1, nullptr },
+        // Máster
+        { "master",     "Volumen",    "Máster", PType::Float, 0, 1, 0.7f, 1, nullptr },
+        { "tune",       "Afinación",  "Máster", PType::Float, -1, 1, 0, 1, nullptr },
+        { "limiter",    "Limitador",  "Máster", PType::Bool, 0, 1, 1, 1, nullptr },
     };
     return defs;
 }
