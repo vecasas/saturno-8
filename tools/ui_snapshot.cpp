@@ -41,6 +41,7 @@ int main (int argc, char** argv)
     if (peak <= 0.01f || proc.activeVoices[0].load() < 1 || proc.activeVoices[1].load() < 1) return 1;
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
     if (auto* s8ed = dynamic_cast<Saturno8Editor*> (ed.get())) s8ed->showPageForSnapshot (page);
+    ed->setSize (juce::roundToInt ((float) ed->getWidth() / 0.8f), juce::roundToInt ((float) ed->getHeight() / 0.8f));   // al 100 %
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, scale);
     juce::FileOutputStream os (out);
     os.setPosition (0); os.truncate();
