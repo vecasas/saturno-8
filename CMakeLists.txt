@@ -39,7 +39,16 @@ juce_generate_juce_header(Saturno8)
 
 target_sources(Saturno8 PRIVATE
     src/PluginProcessor.cpp
-    src/PluginEditor.cpp)
+    src/PluginEditor.cpp
+    src/Params.h
+    src/dsp/DspUtils.h
+    src/dsp/Voice.h
+    src/dsp/Layer.h)
+
+# Los textos de la interfaz llevan acentos: compilar como UTF-8 también en Windows.
+if(MSVC)
+    target_compile_options(Saturno8 PRIVATE /utf-8)
+endif()
 
 target_compile_definitions(Saturno8 PUBLIC
     JUCE_WEB_BROWSER=0
@@ -50,3 +59,26 @@ target_compile_definitions(Saturno8 PUBLIC
 target_link_libraries(Saturno8
     PRIVATE juce::juce_audio_utils juce::juce_dsp
     PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+
+# Herramienta de línea de comandos que renderiza sonidos de ejemplo a WAV (sin JUCE).
+add_executable(render_demo tools/render_demo.cpp)
+target_compile_features(render_demo PRIVATE cxx_std_20)
+
+# Pruebas del motor (sin JUCE): ctest --test-dir build -C Release
+enable_testing()
+add_executable(test_voice tests/test_voice.cpp)
+target_compile_features(test_voice PRIVATE cxx_std_20)
+add_test(NAME voice COMMAND test_voice)
+
+# Captura de la interfaz sin ventana (opcional): -DS8_UI_SNAPSHOT=ON
+option(S8_UI_SNAPSHOT "Construir la herramienta de captura de la interfaz" OFF)
+if(S8_UI_SNAPSHOT)
+    juce_add_console_app(ui_snapshot PRODUCT_NAME "ui_snapshot")
+    target_sources(ui_snapshot PRIVATE tools/ui_snapshot.cpp src/PluginProcessor.cpp src/PluginEditor.cpp)
+    target_include_directories(ui_snapshot PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/Saturno8_artefacts/JuceLibraryCode)
+    target_compile_definitions(ui_snapshot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        JucePlugin_Name="Saturno 8" JucePlugin_IsSynth=1 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0
+        JucePlugin_IsMidiEffect=0 JUCE_STANDALONE_APPLICATION=1)
+    juce_generate_juce_header(ui_snapshot)
+    target_link_libraries(ui_snapshot PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
+endif()
