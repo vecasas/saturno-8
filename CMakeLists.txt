@@ -46,7 +46,8 @@ target_sources(Saturno8 PRIVATE
     src/dsp/Layer.h
     src/dsp/Synth.h
     src/seq/Player.h
-    src/StepGrid.h)
+    src/StepGrid.h
+    src/fx/Effects.h)
 
 # Los textos de la interfaz llevan acentos: compilar como UTF-8 también en Windows.
 if(MSVC)
@@ -78,6 +79,9 @@ add_test(NAME synth COMMAND test_synth)
 add_executable(test_player tests/test_player.cpp)
 target_compile_features(test_player PRIVATE cxx_std_20)
 add_test(NAME player COMMAND test_player)
+add_executable(test_fx tests/test_fx.cpp)
+target_compile_features(test_fx PRIVATE cxx_std_20)
+add_test(NAME fx COMMAND test_fx)
 
 # Captura de la interfaz sin ventana (opcional): -DS8_UI_SNAPSHOT=ON
 option(S8_UI_SNAPSHOT "Construir la herramienta de captura de la interfaz" OFF)

@@ -6,6 +6,7 @@
 
 #include "Layer.h"
 #include "../seq/Player.h"
+#include "../fx/Effects.h"
 
 namespace s8
 {
@@ -61,6 +62,8 @@ public:
     Synth& operator= (const Synth&) = delete;
 
     Layer upper, lower;
+    LayerFx upperFx, lowerFx;
+    GlobalFx globalFx;
     Player upperPlayer { upper }, lowerPlayer { lower };
     GlobalParams g;
 
@@ -92,8 +95,9 @@ public:
         upper.setSampleRate (sr);
         lower.setSampleRate (sr);
         limiter.prepare (sr);
+        upperFx.prepare (sr); lowerFx.prepare (sr); globalFx.prepare (sr);
     }
-    void reset() { upperPlayer.stop(); lowerPlayer.stop(); upper.reset(); lower.reset(); bend = 0; wheel = 0; }
+    void reset() { upperFx.clear(); lowerFx.clear(); globalFx.clear(); upperPlayer.stop(); lowerPlayer.stop(); upper.reset(); lower.reset(); bend = 0; wheel = 0; }
 
     void noteOn (int note, float vel)
     {
@@ -125,6 +129,7 @@ public:
 
     void setPitchBend (float v) { bend = std::clamp (v, -1.0f, 1.0f); }   // -1..1
     void setModWheel (float v) { wheel = std::clamp (v, 0.0f, 1.0f); }   // 0..1
+    void setAftertouch (float v) { aftertouch = std::clamp (v, 0.0f, 1.0f); }   // 0..1
 
     // Actualiza los controles de interpretación de cada capa. Llamar una vez por bloque.
     void updatePlay()
@@ -146,6 +151,7 @@ public:
             pp.driftVco = g.driftVco * ds; pp.driftVcf = g.driftVcf * ds;
             pp.driftVca = g.driftVca * ds; pp.envSlop = std::min (1.0f, g.envSlop * ds);
             pp.tuneSt = g.tune;
+            pp.wheel = wheel; pp.aftertouch = aftertouch; pp.bend = bend;
         }
     }
 
@@ -158,9 +164,14 @@ public:
         float ul = 0, ur = 0, ll = 0, lr = 0;
         upper.process (ul, ur);
         lower.process (ll, lr);
+        upperFx.process (ul, ur, tempo);
+        lowerFx.process (ll, lr, tempo);
         const float gu = std::min (1.0f, 1.0f + g.balance), gl = std::min (1.0f, 1.0f - g.balance);
-        l = (ul * gu + ll * gl) * g.volume;
-        r = (ur * gu + lr * gl) * g.volume;
+        l = ul * gu + ll * gl;
+        r = ur * gu + lr * gl;
+        globalFx.process (l, r);
+        l *= g.volume;
+        r *= g.volume;
         reduction = g.limiter ? limiter.process (l, r) : 1.0f;
     }
 
@@ -187,7 +198,7 @@ private:
         return isUpper;
     }
 
-    float bend = 0, wheel = 0, reduction = 1, sr = 48000;
+    float bend = 0, wheel = 0, aftertouch = 0, reduction = 1, sr = 48000;
     double tempo = 120, beat = 0;
     bool hostSync = false;
     PlayerMode lastMode[2] { PlayerMode::Off, PlayerMode::Off };

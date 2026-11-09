@@ -95,6 +95,47 @@ inline const std::vector<ParamDef>& layerParamDefs()
     return defs;
 }
 
+// Efectos y matriz de modulación de una capa (mismo prefijo que la capa).
+inline const std::vector<ParamDef>& layerFxParamDefs()
+{
+    static const std::vector<ParamDef> defs {
+        { "fx_drive_on",  "Activa",   "Distorsión", PType::Bool, 0, 1, 0, 1, nullptr },
+        { "fx_drive",     "Drive",    "Distorsión", PType::Float, 0, 1, 0.3f, 1, nullptr },
+        { "fx_drive_tone", "Tono",    "Distorsión", PType::Float, 0, 1, 0.6f, 1, nullptr },
+        { "fx_drive_mix", "Mezcla",   "Distorsión", PType::Float, 0, 1, 1, 1, nullptr },
+        { "fx_chorus_on", "Activo",   "Chorus", PType::Bool, 0, 1, 0, 1, nullptr },
+        { "fx_chorus_mode", "Modo",   "Chorus", PType::Choice, 0, 2, 0, 1, "I|II|I+II" },
+        { "fx_chorus_mix", "Mezcla",  "Chorus", PType::Float, 0, 1, 0.5f, 1, nullptr },
+        { "fx_phaser_on", "Activo",   "Phaser", PType::Bool, 0, 1, 0, 1, nullptr },
+        { "fx_phaser_rate", "Velocidad", "Phaser", PType::Float, 0, 1, 0.3f, 1, nullptr },
+        { "fx_phaser_depth", "Profundidad", "Phaser", PType::Float, 0, 1, 0.7f, 1, nullptr },
+        { "fx_phaser_fb", "Realim.",  "Phaser", PType::Float, 0, 1, 0.4f, 1, nullptr },
+        { "fx_phaser_mix", "Mezcla",  "Phaser", PType::Float, 0, 1, 0.5f, 1, nullptr },
+        { "fx_delay_on",  "Activo",   "Delay", PType::Bool, 0, 1, 0, 1, nullptr },
+        { "fx_delay_sync", "Al tempo", "Delay", PType::Bool, 0, 1, 1, 1, nullptr },
+        { "fx_delay_div", "Figura",   "Delay", PType::Choice, 0, 8, 4, 1, "1/16|1/16.|1/8T|1/8|1/8.|1/4T|1/4|1/4.|1/2" },
+        { "fx_delay_ms",  "Libre",    "Delay", PType::Float, 20, 2000, 350, 0.4f, nullptr },
+        { "fx_delay_fb",  "Realim.",  "Delay", PType::Float, 0, 0.95f, 0.35f, 1, nullptr },
+        { "fx_delay_damp", "Apagado", "Delay", PType::Float, 0, 1, 0.4f, 1, nullptr },
+        { "fx_delay_mix", "Mezcla",   "Delay", PType::Float, 0, 1, 0.25f, 1, nullptr },
+        { "fx_delay_pp",  "Ping-pong", "Delay", PType::Bool, 0, 1, 0, 1, nullptr },
+        // Matriz de modulación: cuatro ranuras
+        { "mod1_src", "Fuente 1",  "Matriz", PType::Choice, 0, 9, 0, 1, "-|LFO|ENV-1|ENV-2|Velocidad|Teclado|Rueda|Aftertouch|Bender|Azar" },
+        { "mod1_dst", "Destino 1", "Matriz", PType::Choice, 0, 11, 0, 1, "-|Tono|Tono VCO-1|Tono VCO-2|Ancho pulso|Cruzada|Nivel VCO-2|Paso alto|Corte|Resonancia|Nivel|Panorama" },
+        { "mod1_amt", "Cantidad 1", "Matriz", PType::Float, -1, 1, 0, 1, nullptr },
+        { "mod2_src", "Fuente 2",  "Matriz", PType::Choice, 0, 9, 0, 1, "-|LFO|ENV-1|ENV-2|Velocidad|Teclado|Rueda|Aftertouch|Bender|Azar" },
+        { "mod2_dst", "Destino 2", "Matriz", PType::Choice, 0, 11, 0, 1, "-|Tono|Tono VCO-1|Tono VCO-2|Ancho pulso|Cruzada|Nivel VCO-2|Paso alto|Corte|Resonancia|Nivel|Panorama" },
+        { "mod2_amt", "Cantidad 2", "Matriz", PType::Float, -1, 1, 0, 1, nullptr },
+        { "mod3_src", "Fuente 3",  "Matriz", PType::Choice, 0, 9, 0, 1, "-|LFO|ENV-1|ENV-2|Velocidad|Teclado|Rueda|Aftertouch|Bender|Azar" },
+        { "mod3_dst", "Destino 3", "Matriz", PType::Choice, 0, 11, 0, 1, "-|Tono|Tono VCO-1|Tono VCO-2|Ancho pulso|Cruzada|Nivel VCO-2|Paso alto|Corte|Resonancia|Nivel|Panorama" },
+        { "mod3_amt", "Cantidad 3", "Matriz", PType::Float, -1, 1, 0, 1, nullptr },
+        { "mod4_src", "Fuente 4",  "Matriz", PType::Choice, 0, 9, 0, 1, "-|LFO|ENV-1|ENV-2|Velocidad|Teclado|Rueda|Aftertouch|Bender|Azar" },
+        { "mod4_dst", "Destino 4", "Matriz", PType::Choice, 0, 11, 0, 1, "-|Tono|Tono VCO-1|Tono VCO-2|Ancho pulso|Cruzada|Nivel VCO-2|Paso alto|Corte|Resonancia|Nivel|Panorama" },
+        { "mod4_amt", "Cantidad 4", "Matriz", PType::Float, -1, 1, 0, 1, nullptr },
+    };
+    return defs;
+}
+
 // Parámetros globales (sin prefijo).
 inline const std::vector<ParamDef>& globalParamDefs()
 {
@@ -128,6 +169,15 @@ inline const std::vector<ParamDef>& globalParamDefs()
         { "tune",       "Afinación",  "Máster", PType::Float, -1, 1, 0, 1, nullptr },
         { "limiter",    "Limitador",  "Máster", PType::Bool, 0, 1, 1, 1, nullptr },
         { "tempo",      "Tempo",      "Máster", PType::Float, 40, 240, 120, 1, nullptr },
+        // Efectos globales
+        { "eq_on",      "Activo",     "Ecualizador", PType::Bool, 0, 1, 0, 1, nullptr },
+        { "eq_low",     "Graves",     "Ecualizador", PType::Float, -12, 12, 0, 1, nullptr },
+        { "eq_high",    "Agudos",     "Ecualizador", PType::Float, -12, 12, 0, 1, nullptr },
+        { "rv_on",      "Activa",     "Reverb", PType::Bool, 0, 1, 0, 1, nullptr },
+        { "rv_size",    "Tamaño",     "Reverb", PType::Float, 0, 1, 0.6f, 1, nullptr },
+        { "rv_damp",    "Apagado",    "Reverb", PType::Float, 0, 1, 0.5f, 1, nullptr },
+        { "rv_predelay", "Predelay",  "Reverb", PType::Float, 0, 150, 20, 1, nullptr },
+        { "rv_mix",     "Mezcla",     "Reverb", PType::Float, 0, 1, 0.2f, 1, nullptr },
     };
     return defs;
 }

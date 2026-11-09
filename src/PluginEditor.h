@@ -33,8 +33,9 @@ private:
     void layoutRows (const Rows&, std::vector<std::unique_ptr<Control>>&, int top);
 
     Saturno8Processor& proc;
-    int page = 0;   // 0 = capa superior, 1 = capa inferior, 2 = global
-    std::vector<std::unique_ptr<Control>> layerControls, globalControls;
+    // Páginas: 0/1 = capa superior/inferior, 2/3 = efectos y matriz de cada capa, 4 = global
+    int page = 0;
+    std::vector<std::unique_ptr<Control>> layerControls, fxControls, globalControls;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> sectionBoxes;
     struct Tabs : juce::TabbedButtonBar
     {
