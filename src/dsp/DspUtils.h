@@ -98,6 +98,23 @@ struct OnePoleHp
     }
 };
 
+// Limitador de picos estéreo: ataque instantáneo y liberación lenta (150 ms).
+struct Limiter
+{
+    float env = 0, rel = 0.9995f;
+    void prepare (float sr) { env = 0; rel = std::exp (-1.0f / (0.15f * sr)); }
+    // Devuelve la reducción aplicada (1 = ninguna).
+    float process (float& l, float& r, float ceiling = 0.95f)
+    {
+        const float peak = std::max (std::abs (l), std::abs (r));
+        env = std::max (peak, env * rel);
+        const float g = env > ceiling ? ceiling / env : 1.0f;
+        l *= g;
+        r *= g;
+        return g;
+    }
+};
+
 // tan(pi f / sr) acotado, para los filtros TPT.
 inline float tptG (float hz, float sr)
 {

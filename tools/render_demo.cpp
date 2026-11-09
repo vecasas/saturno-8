@@ -1,6 +1,6 @@
 // Renderiza unos sonidos de ejemplo a WAV para escuchar el motor sin DAW.
 // Uso: render_demo <carpeta_salida>
-#include "../src/dsp/Layer.h"
+#include "../src/dsp/Synth.h"
 #include <chrono>
 #include <cstdio>
 #include <functional>
@@ -94,6 +94,43 @@ int main (int argc, char** argv)
         writeWav (out + "/" + d.name + ".wav", lo, ro, sr);
         std::printf ("%s.wav\n", d.name);
     }
+    // Capas: bajo solo en la inferior y metales en la superior, división en Do 4,
+    // con deriva "de gira" y un toque de bender al final.
+    {
+        Synth S; S.setSampleRate ((float) sr);
+        S.g.keyMode = KeyMode::Split; S.g.splitPoint = 60; S.g.driftOn = true; S.g.condition = Condition::Road;
+        demos[2].setup (S.lower);
+        demos[0].setup (S.upper);
+        S.g.portaOn = true; S.g.portamento = 0.08f; S.g.portaTarget = Target::Lower;
+        std::vector<float> lo, ro;
+        auto render = [&] (float secs, float bendFrom = 0, float bendTo = 0) {
+            const int n = (int) (secs * sr);
+            for (int i = 0; i < n; ++i)
+            {
+                S.setPitchBend (bendFrom + (bendTo - bendFrom) * (float) i / (float) n);
+                S.updatePlay();
+                float l, r; S.process (l, r); lo.push_back (l); ro.push_back (r);
+            }
+        };
+        const int bass[] { 36, 36, 43, 36, 39, 41, 43, 46 };
+        const std::vector<std::vector<int>> chords { { 67, 72, 76 }, { 69, 72, 77 }, { 67, 71, 74 }, { 67, 72, 76 } };
+        for (int bar = 0; bar < 4; ++bar)
+        {
+            for (int n : chords[(size_t) bar]) S.noteOn (n, 0.9f);
+            for (int st = 0; st < 8; ++st)
+            {
+                S.noteOn (bass[st], 1.0f); render (0.2f); S.noteOff (bass[st]); render (0.05f);
+            }
+            for (int n : chords[(size_t) bar]) S.noteOff (n);
+        }
+        for (int n : { 72, 76, 79 }) S.noteOn (n, 0.9f);
+        render (0.6f); render (0.6f, 0, -1); render (0.6f, -1, 0);
+        for (int n : { 72, 76, 79 }) S.noteOff (n);
+        render (2.0f);
+        writeWav (out + "/07_capas_division.wav", lo, ro, sr);
+        std::printf ("07_capas_division.wav\n");
+    }
+
     std::printf ("Tiempo real x%.1f (una capa)\n", renderedSecs / cpuSecs);
     return 0;
 }

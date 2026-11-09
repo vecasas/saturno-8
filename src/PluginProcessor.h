@@ -5,7 +5,7 @@
 #include <unordered_map>
 
 // Saturno 8: sintetizador polifónico analógico modelado (diseño propio).
-// Fase 2: motor de voz de una capa con 16 voces y modos de asignación.
+// Fase 3: dos capas de 16 voces, modos de teclado, interpretación y deriva analógica.
 class Saturno8Processor : public juce::AudioProcessor
 {
 public:
@@ -38,27 +38,30 @@ public:
     juce::AudioProcessorValueTreeState apvts;
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     static juce::String pid (const char* layerPrefix, const char* id) { return juce::String (layerPrefix) + id; }
+    static constexpr const char* kPrefix[2] { "u_", "l_" };   // capa superior, capa inferior
 
     // Teclado de la interfaz (también lo usa la app standalone sin controlador).
     juce::MidiKeyboardState keyboardState;
 
-    // Memoria de acorde: la interfaz lo pide y el hilo de audio lo aplica.
-    void requestChordLearn() { chordLearnRequest.store (true); }
-    juce::String chordDescription() const;
-    std::atomic<int> activeVoices { 0 };
+    // Memoria de acorde: la interfaz lo pide y el hilo de audio lo aplica (0 = superior, 1 = inferior).
+    void requestChordLearn (int layer) { chordLearnRequest.store (layer); }
+    juce::String chordDescription (int layer) const;
+    std::atomic<int> activeVoices[2] { 0, 0 };
+    std::atomic<float> limiterReduction { 1.0f };
 
 private:
-    void readParams();
+    using RawMap = std::unordered_map<std::string_view, std::atomic<float>*>;
+    void readLayer (s8::Layer&, const RawMap&, int& lastAssign);
+    void readGlobal();
 
-    s8::Layer upper;
-    std::unordered_map<std::string_view, std::atomic<float>*> raw;   // id sin prefijo -> valor
-    std::atomic<float>* master = nullptr;
-    std::atomic<bool> chordLearnRequest { false };
+    s8::Synth synth;
+    RawMap raw[2], global;                  // id sin prefijo -> valor
+    std::atomic<int> chordLearnRequest { -1 };
     mutable juce::SpinLock chordLock;
-    std::vector<int> chordCopy { 0, 4, 7 };   // para guardar el estado fuera del hilo de audio
-    std::vector<int> pendingChord;
+    std::vector<int> chordCopy[2];          // para guardar el estado fuera del hilo de audio
+    std::vector<int> pendingChord[2];
     std::atomic<bool> chordRestore { false };
-    int lastAssign = -1;
+    int lastAssign[2] { -1, -1 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Saturno8Processor)
 };

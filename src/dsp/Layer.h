@@ -28,6 +28,7 @@ class Layer
 public:
     LayerParams p;
     AssignParams a;
+    PlayParams play;
 
     Layer()
     {
@@ -44,9 +45,11 @@ public:
         for (auto& v : voices) v.setSampleRate (sr);
     }
 
-    void noteOn (int note, float vel)
+    // gain: nivel de la nota en esta capa (lo usa el fundido del modo división).
+    void noteOn (int note, float vel, float gain = 1.0f)
     {
         ++clock;
+        noteGain = gain;
         if (! anyHeld()) lfo.restartFade();
         pressed[(size_t) note] = true;
         sustained[(size_t) note] = false;
@@ -115,7 +118,7 @@ public:
     void process (float& l, float& r)
     {
         const float lfoOut = lfo.process (p, sr);
-        for (auto& v : voices) v.process (p, lfoOut, l, r);
+        for (auto& v : voices) v.process (p, play, lfoOut, l, r);
     }
 
     int activeVoices() const
@@ -180,8 +183,11 @@ private:
         const int i = pickVoice (sounding, reuseSame);
         auto& v = voices[(size_t) i];
         v.offs = {};
-        v.start (sounding, vel, true, clock);
+        v.offs.gain = noteGain;
+        // Con portamento, la voz nueva sale desde la última nota tocada en la capa.
+        v.start (sounding, vel, true, clock, play.glide > 0.0005f && lastPitch >= 0 ? lastPitch : -1.0f);
         voiceKey[(size_t) i] = key;
+        lastPitch = (float) sounding;
     }
 
     int monoNote() const
@@ -222,8 +228,13 @@ private:
             const float spread = count > 1 ? (float) i / (float) (count - 1) * 2.0f - 1.0f : 0.0f;
             v.offs.detuneSt = spread * a.unisonDetune * 0.5f;
             v.offs.pan = spread * 0.7f;
+            if (fromNoteOn) v.offs.gain = noteGain;
             if (wasSounding && v.held() && ! retrigger) v.glideTo (note);
-            else v.start (note, fromNoteOn ? vel : monoVel, retrigger || ! v.held(), clock);
+            else
+            {
+                const bool glide = play.glide > 0.0005f && v.active();
+                v.start (note, fromNoteOn ? vel : monoVel, retrigger || ! v.held(), clock, glide ? v.currentPitch() : -1.0f);
+            }
         }
         if (fromNoteOn) monoVel = vel;
         monoPlaying = note;
@@ -238,6 +249,8 @@ private:
     bool sustainPedal = false;
     int monoPlaying = -1;
     float monoVel = 1.0f;
+    float lastPitch = -1.0f;
+    float noteGain = 1.0f;
     Lfo lfo;
 };
 } // namespace s8

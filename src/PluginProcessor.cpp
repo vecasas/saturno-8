@@ -3,29 +3,40 @@
 
 namespace
 {
-constexpr const char* kUpper = "u_";
+juce::String noteName (int n)
+{
+    static const char* names[] { "Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si" };
+    return juce::String (names[n % 12]) + juce::String (n / 12 - 1);
+}
 
-std::unique_ptr<juce::RangedAudioParameter> makeParam (const s8::ParamDef& d, const char* prefix)
+std::unique_ptr<juce::RangedAudioParameter> makeParam (const s8::ParamDef& d, const char* prefix, const char* layerName)
 {
     const juce::ParameterID id { Saturno8Processor::pid (prefix, d.id), 1 };
-    const juce::String name = juce::String (juce::CharPointer_UTF8 (d.section)) + " " + juce::String (juce::CharPointer_UTF8 (d.name));
+    juce::String name = juce::String (juce::CharPointer_UTF8 (d.section)) + " " + juce::String (juce::CharPointer_UTF8 (d.name));
+    if (layerName != nullptr) name = juce::String (layerName) + " " + name;
+    const juce::String sid (d.id);
     switch (d.type)
     {
         case s8::PType::Choice: return std::make_unique<juce::AudioParameterChoice> (id, name, s8::choicesOf (d), (int) d.def);
         case s8::PType::Bool:   return std::make_unique<juce::AudioParameterBool> (id, name, d.def > 0.5f);
-        case s8::PType::Int:    return std::make_unique<juce::AudioParameterInt> (id, name, (int) d.min, (int) d.max, (int) d.def);
+        case s8::PType::Int:
+            if (sid == "split")
+                return std::make_unique<juce::AudioParameterInt> (id, name, (int) d.min, (int) d.max, (int) d.def,
+                    juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int) { return noteName (v); }));
+            return std::make_unique<juce::AudioParameterInt> (id, name, (int) d.min, (int) d.max, (int) d.def);
         case s8::PType::Float:  break;
     }
     juce::NormalisableRange<float> range (d.min, d.max, 0.0f, d.skew);
     // Texto con unidades; los mandos de 0..1 se muestran de 0 a 10, como en el panel.
-    const juce::String sid (d.id);
     std::function<juce::String (float, int)> toText = [] (float v, int) { return juce::String (v * 10.0f, 1); };
-    if (sid.endsWith ("_a") || sid.endsWith ("_d") || sid.endsWith ("_r") || sid == "lfo_delay")
+    if (sid.endsWith ("_a") || sid.endsWith ("_d") || sid.endsWith ("_r") || sid == "lfo_delay" || sid == "porta")
         toText = [] (float v, int) { return v < 1.0f ? juce::String (juce::roundToInt (v * 1000.0f)) + " ms" : juce::String (v, 2) + " s"; };
     else if (sid == "lfo_rate")
         toText = [] (float v, int) { return juce::String (v, v < 10.0f ? 2 : 1) + " Hz"; };
-    else if (sid == "vco2_fine")
+    else if (sid == "vco2_fine" || sid == "bend_range")
         toText = [] (float v, int) { return (v > 0 ? "+" : "") + juce::String (v, 2) + " st"; };
+    else if (sid == "tune")
+        toText = [] (float v, int) { return (v > 0 ? "+" : "") + juce::String (juce::roundToInt (v * 100.0f)) + " cents"; };
     return std::make_unique<juce::AudioParameterFloat> (id, name, range, d.def,
         juce::AudioParameterFloatAttributes().withStringFromValueFunction (toText));
 }
@@ -35,20 +46,28 @@ Saturno8Processor::Saturno8Processor()
     : AudioProcessor (BusesProperties().withOutput ("Main", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMS", createLayout())
 {
-    for (auto& d : s8::layerParamDefs())
-        raw[d.id] = apvts.getRawParameterValue (pid (kUpper, d.id));
-    master = apvts.getRawParameterValue ("master");
-    chordCopy.reserve (s8::kMaxVoices);
-    pendingChord.reserve (s8::kMaxVoices);
+    for (int l = 0; l < 2; ++l)
+    {
+        for (auto& d : s8::layerParamDefs())
+            raw[l][d.id] = apvts.getRawParameterValue (pid (kPrefix[l], d.id));
+        chordCopy[l] = { 0, 4, 7 };
+        chordCopy[l].reserve (s8::kMaxVoices);
+        pendingChord[l].reserve (s8::kMaxVoices);
+    }
+    for (auto& d : s8::globalParamDefs())
+        global[d.id] = apvts.getRawParameterValue (d.id);
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout Saturno8Processor::createLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
-    for (auto& d : s8::layerParamDefs())
-        layout.add (makeParam (d, kUpper));
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { "master", 1 }, "Master", 0.0f, 1.0f, 0.7f));
+    for (int l = 0; l < 2; ++l)
+    {
+        for (auto& d : s8::layerParamDefs())
+            layout.add (makeParam (d, kPrefix[l], l == 0 ? "Sup." : "Inf."));
+    }
+    for (auto& d : s8::globalParamDefs())
+        layout.add (makeParam (d, "", nullptr));
     return layout;
 }
 
@@ -60,16 +79,16 @@ bool Saturno8Processor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 
 void Saturno8Processor::prepareToPlay (double sampleRate, int)
 {
-    upper.setSampleRate ((float) sampleRate);
-    upper.reset();
+    synth.setSampleRate ((float) sampleRate);
+    synth.reset();
     keyboardState.reset();
 }
 
-void Saturno8Processor::readParams()
+void Saturno8Processor::readLayer (s8::Layer& layer, const RawMap& m, int& last)
 {
-    auto& p = upper.p;
-    auto& a = upper.a;
-    auto f = [this] (std::string_view id) { return raw.at (id)->load(); };
+    auto& p = layer.p;
+    auto& a = layer.a;
+    auto f = [&m] (std::string_view id) { return m.at (id)->load(); };
     auto n = [&f] (std::string_view id) { return (int) std::lround (f (id)); };
     auto b = [&f] (std::string_view id) { return f (id) > 0.5f; };
     p.vco1Range = n ("vco1_range"); p.vco1Wave = (s8::Wave1) n ("vco1_wave"); p.crossMod = f ("xmod");
@@ -91,7 +110,23 @@ void Saturno8Processor::readParams()
     a.unisonVoices = n ("uni_voices"); a.unisonDetune = f ("uni_detune"); a.polyVoices = n ("poly_voices");
 
     // Cambiar de modo de asignación suelta todo para empezar limpio.
-    if (assign != lastAssign) { if (lastAssign >= 0) upper.allNotesOff(); lastAssign = assign; }
+    if (assign != last) { if (last >= 0) layer.allNotesOff(); last = assign; }
+}
+
+void Saturno8Processor::readGlobal()
+{
+    auto& g = synth.g;
+    auto f = [this] (std::string_view id) { return global.at (id)->load(); };
+    auto n = [&f] (std::string_view id) { return (int) std::lround (f (id)); };
+    auto b = [&f] (std::string_view id) { return f (id) > 0.5f; };
+    g.keyMode = (s8::KeyMode) n ("key_mode"); g.splitPoint = n ("split"); g.balance = f ("balance");
+    g.sustainUpper = b ("sus_upper"); g.sustainLower = b ("sus_lower");
+    g.bendRange = f ("bend_range"); g.bendDest = (s8::ModDest) n ("bend_dest"); g.bendVcf = f ("bend_vcf");
+    g.bendTarget = (s8::Target) n ("bend_target"); g.wheelVco = f ("wheel_vco"); g.wheelVcf = f ("wheel_vcf");
+    g.portaOn = b ("porta_on"); g.portamento = f ("porta"); g.portaTarget = (s8::Target) n ("porta_target");
+    g.driftOn = b ("drift_on"); g.condition = (s8::Condition) n ("condition");
+    g.driftVco = f ("drift_vco"); g.driftVcf = f ("drift_vcf"); g.driftVca = f ("drift_vca"); g.envSlop = f ("env_slop");
+    g.volume = f ("master"); g.tune = f ("tune"); g.limiter = b ("limiter");
 }
 
 void Saturno8Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -99,51 +134,63 @@ void Saturno8Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
     keyboardState.processNextMidiBuffer (midi, 0, buffer.getNumSamples(), true);
-    readParams();
+    readLayer (synth.upper, raw[0], lastAssign[0]);
+    readLayer (synth.lower, raw[1], lastAssign[1]);
+    readGlobal();
 
     if (chordRestore.exchange (false))
     {
         const juce::SpinLock::ScopedTryLockType lock (chordLock);
-        if (lock.isLocked()) upper.setChordIntervals (pendingChord);
+        if (lock.isLocked()) { synth.upper.setChordIntervals (pendingChord[0]); synth.lower.setChordIntervals (pendingChord[1]); }
         else chordRestore.store (true);
     }
-    if (chordLearnRequest.exchange (false) && upper.learnChord())
+    if (const int l = chordLearnRequest.exchange (-1); l == 0 || l == 1)
     {
-        const juce::SpinLock::ScopedTryLockType lock (chordLock);
-        if (lock.isLocked()) chordCopy.assign (upper.chordIntervals().begin(), upper.chordIntervals().end());   // capacidad reservada: sin reservas nuevas
+        auto& layer = l == 0 ? synth.upper : synth.lower;
+        if (layer.learnChord())
+        {
+            const juce::SpinLock::ScopedTryLockType lock (chordLock);
+            if (lock.isLocked()) chordCopy[l].assign (layer.chordIntervals().begin(), layer.chordIntervals().end());
+        }
     }
 
-    const float gain = master->load();
     auto* L = buffer.getWritePointer (0);
     auto* R = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr;
+    float minGain = 1.0f;
 
     auto midiIt = midi.cbegin();
     for (int i = 0; i < buffer.getNumSamples(); ++i)
     {
+        bool controlsChanged = i == 0;
         for (; midiIt != midi.cend() && (*midiIt).samplePosition <= i; ++midiIt)
         {
             const auto msg = (*midiIt).getMessage();
-            if (msg.isNoteOn()) upper.noteOn (msg.getNoteNumber(), msg.getFloatVelocity());
-            else if (msg.isNoteOff()) upper.noteOff (msg.getNoteNumber());
-            else if (msg.isSustainPedalOn()) upper.setSustain (true);
-            else if (msg.isSustainPedalOff()) upper.setSustain (false);
-            else if (msg.isAllNotesOff() || msg.isAllSoundOff()) upper.allNotesOff();
+            if (msg.isNoteOn()) synth.noteOn (msg.getNoteNumber(), msg.getFloatVelocity());
+            else if (msg.isNoteOff()) synth.noteOff (msg.getNoteNumber());
+            else if (msg.isSustainPedalOn()) synth.setSustain (true);
+            else if (msg.isSustainPedalOff()) synth.setSustain (false);
+            else if (msg.isAllNotesOff() || msg.isAllSoundOff()) synth.allNotesOff();
+            else if (msg.isPitchWheel()) { synth.setPitchBend ((float) (msg.getPitchWheelValue() - 8192) / 8192.0f); controlsChanged = true; }
+            else if (msg.isControllerOfType (1)) { synth.setModWheel ((float) msg.getControllerValue() / 127.0f); controlsChanged = true; }
         }
+        if (controlsChanged) synth.updatePlay();
 
         float l = 0, r = 0;
-        upper.process (l, r);
-        if (R != nullptr) { L[i] = l * gain; R[i] = r * gain; }
-        else L[i] = 0.5f * (l + r) * gain;
+        synth.process (l, r);
+        minGain = std::min (minGain, synth.lastReduction());
+        if (R != nullptr) { L[i] = l; R[i] = r; }
+        else L[i] = 0.5f * (l + r);
     }
-    activeVoices.store (upper.activeVoices());
+    activeVoices[0].store (synth.upper.activeVoices());
+    activeVoices[1].store (synth.lower.activeVoices());
+    limiterReduction.store (minGain);
 }
 
-juce::String Saturno8Processor::chordDescription() const
+juce::String Saturno8Processor::chordDescription (int layer) const
 {
-    static const char* names[] { "Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si" };
     juce::StringArray parts;
     const juce::SpinLock::ScopedLockType lock (chordLock);
-    for (int iv : chordCopy) parts.add (names[iv % 12]);
+    for (int iv : chordCopy[layer]) parts.add (noteName (iv + 12).dropLastCharacters (1));
     return parts.joinIntoString (" ");
 }
 
@@ -156,10 +203,13 @@ void Saturno8Processor::getStateInformation (juce::MemoryBlock& dest)
 {
     auto state = apvts.copyState();
     {
-        juce::StringArray chord;
         const juce::SpinLock::ScopedLockType lock (chordLock);
-        for (int iv : chordCopy) chord.add (juce::String (iv));
-        state.setProperty ("chord", chord.joinIntoString (","), nullptr);
+        for (int l = 0; l < 2; ++l)
+        {
+            juce::StringArray chord;
+            for (int iv : chordCopy[l]) chord.add (juce::String (iv));
+            state.setProperty (l == 0 ? "chord" : "chord_lower", chord.joinIntoString (","), nullptr);
+        }
     }
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, dest);
@@ -171,17 +221,19 @@ void Saturno8Processor::setStateInformation (const void* data, int size)
         if (xml->hasTagName (apvts.state.getType()))
         {
             auto tree = juce::ValueTree::fromXml (*xml);
-            std::vector<int> chord;
-            for (auto& t : juce::StringArray::fromTokens (tree.getProperty ("chord").toString(), ",", ""))
-                if (chord.size() < (size_t) s8::kMaxVoices) chord.push_back (juce::jlimit (0, 96, t.getIntValue()));
+            std::vector<int> chords[2];
+            for (int l = 0; l < 2; ++l)
+                for (auto& t : juce::StringArray::fromTokens (tree.getProperty (l == 0 ? "chord" : "chord_lower").toString(), ",", ""))
+                    if (chords[l].size() < (size_t) s8::kMaxVoices) chords[l].push_back (juce::jlimit (0, 96, t.getIntValue()));
             apvts.replaceState (tree);
-            if (! chord.empty())
+            const juce::SpinLock::ScopedLockType lock (chordLock);
+            for (int l = 0; l < 2; ++l)
             {
-                const juce::SpinLock::ScopedLockType lock (chordLock);
-                chordCopy.assign (chord.begin(), chord.end());
-                pendingChord.assign (chord.begin(), chord.end());
-                chordRestore.store (true);
+                if (chords[l].empty()) chords[l] = { 0, 4, 7 };
+                chordCopy[l].assign (chords[l].begin(), chords[l].end());
+                pendingChord[l].assign (chords[l].begin(), chords[l].end());
             }
+            chordRestore.store (true);
         }
 }
 
