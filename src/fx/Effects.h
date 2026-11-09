@@ -252,8 +252,9 @@ private:
     {
         if (p.eqLow != lastLow) { lastLow = p.eqLow; for (auto& b : low) b.shelf (false, 140.0f, p.eqLow, sr); }
         if (p.eqHigh != lastHigh) { lastHigh = p.eqHigh; for (auto& b : high) b.shelf (true, 5000.0f, p.eqHigh, sr); }
-        l = high[0].process (low[0].process (l));
-        r = high[1].process (low[1].process (r));
+        // Una banda a 0 dB no se procesa: plano exacto y menos CPU.
+        if (p.eqLow != 0.0f) { l = low[0].process (l); r = low[1].process (r); }
+        if (p.eqHigh != 0.0f) { l = high[0].process (l); r = high[1].process (r); }
     }
 
     void reverb (float& l, float& r)
