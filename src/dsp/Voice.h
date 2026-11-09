@@ -95,7 +95,7 @@ struct Adsr
             case Sustain: value = s; break;
             case Release:
                 value -= value * coef (r * 0.3f);
-                if (value < 1.0e-5f) { value = 0; stage = Idle; }
+                if (value < 1.0e-4f) { value = 0; stage = Idle; }   // -80 dB
                 break;
             case Idle: break;
         }

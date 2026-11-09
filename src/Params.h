@@ -79,6 +79,18 @@ inline const std::vector<ParamDef>& layerParamDefs()
         { "uni_voices", "Voces uní.", "Asignación", PType::Int, 1, 16, 4, 1, nullptr },
         { "uni_detune", "Desafinar", "Asignación", PType::Float, 0, 1, 0.3f, 1, nullptr },
         { "poly_voices", "Voces poli", "Asignación", PType::Int, 1, 16, 16, 1, nullptr },
+        // Arpegiador y secuenciador de pasos
+        { "arp_mode",   "Modo",       "Arpegiador", PType::Choice, 0, 2, 0, 1, "Apagado|Arpegiador|Secuenciador" },
+        { "arp_pattern", "Patrón",    "Arpegiador", PType::Choice, 0, 3, 0, 1, "Arpegio|Salto|Orden|Azar" },
+        { "arp_dir",    "Dirección",  "Arpegiador", PType::Choice, 0, 3, 0, 1, "Arriba|Abajo|Arriba-abajo|Abajo-arriba" },
+        { "arp_range",  "Octavas",    "Arpegiador", PType::Int, 1, 4, 1, 1, nullptr },
+        { "arp_div",    "Figura",     "Arpegiador", PType::Choice, 0, 5, 3, 1, "1/4|1/8|1/8T|1/16|1/16T|1/32" },
+        { "arp_gate",   "Duración",   "Arpegiador", PType::Float, 0.05f, 1, 0.5f, 1, nullptr },
+        { "arp_swing",  "Swing",      "Arpegiador", PType::Float, 0.5f, 0.75f, 0.5f, 1, nullptr },
+        { "arp_chance", "Probabilidad", "Arpegiador", PType::Float, 0, 1, 1, 1, nullptr },
+        { "arp_hold",   "Enganche",   "Arpegiador", PType::Bool, 0, 1, 0, 1, nullptr },
+        { "seq_len",    "Pasos",      "Arpegiador", PType::Int, 1, 16, 16, 1, nullptr },
+        { "seq_play",   "Recorrido",  "Arpegiador", PType::Choice, 0, 2, 0, 1, "Bucle|Ida y vuelta|Azar" },
     };
     return defs;
 }
@@ -115,6 +127,7 @@ inline const std::vector<ParamDef>& globalParamDefs()
         { "master",     "Volumen",    "Máster", PType::Float, 0, 1, 0.7f, 1, nullptr },
         { "tune",       "Afinación",  "Máster", PType::Float, -1, 1, 0, 1, nullptr },
         { "limiter",    "Limitador",  "Máster", PType::Bool, 0, 1, 1, 1, nullptr },
+        { "tempo",      "Tempo",      "Máster", PType::Float, 40, 240, 120, 1, nullptr },
     };
     return defs;
 }

@@ -1,9 +1,11 @@
 #pragma once
 // Saturno 8 completo: dos capas (superior e inferior), modos de teclado,
-// bender, rueda de modulación, portamento, deriva analógica y sección máster.
+// bender, rueda de modulación, portamento, deriva analógica, arpegiador o
+// secuenciador por capa y sección máster.
 // Sin dependencias de JUCE.
 
 #include "Layer.h"
+#include "../seq/Player.h"
 
 namespace s8
 {
@@ -54,31 +56,59 @@ inline float conditionScale (Condition c)
 class Synth
 {
 public:
+    Synth() = default;
+    Synth (const Synth&) = delete;              // los reproductores apuntan a sus capas
+    Synth& operator= (const Synth&) = delete;
+
     Layer upper, lower;
+    Player upperPlayer { upper }, lowerPlayer { lower };
     GlobalParams g;
 
-    void setSampleRate (float sr)
+    // Tempo y posición: llamar al principio de cada bloque.
+    // hostPlaying = el DAW está en marcha y ppq es su posición en negras.
+    void setTransport (double bpm, bool hostPlaying, double ppq)
     {
+        tempo = std::clamp (bpm, 20.0, 400.0);
+        if (hostPlaying) beat = ppq;
+        hostSync = hostPlaying;
+    }
+    double currentBeat() const { return beat; }
+
+    // Aplica los parámetros del arpegiador; si cambia el modo, suelta lo que sonaba.
+    void updatePlayers()
+    {
+        for (int i = 0; i < 2; ++i)
+        {
+            auto& pl = i == 0 ? upperPlayer : lowerPlayer;
+            auto& L = i == 0 ? upper : lower;
+            if (pl.p.mode != lastMode[i]) { pl.stop(); L.allNotesOff(); lastMode[i] = pl.p.mode; }
+            pl.updateHold();
+        }
+    }
+
+    void setSampleRate (float newSr)
+    {
+        sr = newSr;
         upper.setSampleRate (sr);
         lower.setSampleRate (sr);
         limiter.prepare (sr);
     }
-    void reset() { upper.reset(); lower.reset(); bend = 0; wheel = 0; }
+    void reset() { upperPlayer.stop(); lowerPlayer.stop(); upper.reset(); lower.reset(); bend = 0; wheel = 0; }
 
     void noteOn (int note, float vel)
     {
         float gu = 1, gl = 1;
         const bool playU = routes (note, true, gu), playL = routes (note, false, gl);
-        if (playU) upper.noteOn (note, vel, gu);
-        if (playL) lower.noteOn (note, vel, gl);
+        if (playU) { if (upperPlayer.active()) upperPlayer.keyDown (note, vel, gu); else upper.noteOn (note, vel, gu); }
+        if (playL) { if (lowerPlayer.active()) lowerPlayer.keyDown (note, vel, gl); else lower.noteOn (note, vel, gl); }
         playedUpper[(size_t) note] = playU;
         playedLower[(size_t) note] = playL;
     }
     void noteOff (int note)
     {
         // Suelta en la capa que la tocó, aunque el modo haya cambiado entretanto.
-        if (playedUpper[(size_t) note]) upper.noteOff (note);
-        if (playedLower[(size_t) note]) lower.noteOff (note);
+        if (playedUpper[(size_t) note]) { if (upperPlayer.active()) upperPlayer.keyUp (note); else upper.noteOff (note); }
+        if (playedLower[(size_t) note]) { if (lowerPlayer.active()) lowerPlayer.keyUp (note); else lower.noteOff (note); }
         playedUpper[(size_t) note] = playedLower[(size_t) note] = false;
     }
     void setSustain (bool on)
@@ -86,7 +116,12 @@ public:
         if (g.sustainUpper || ! on) upper.setSustain (on);
         if (g.sustainLower || ! on) lower.setSustain (on);
     }
-    void allNotesOff() { upper.allNotesOff(); lower.allNotesOff(); playedUpper.fill (false); playedLower.fill (false); }
+    void allNotesOff()
+    {
+        upperPlayer.stop(); lowerPlayer.stop();
+        upper.allNotesOff(); lower.allNotesOff();
+        playedUpper.fill (false); playedLower.fill (false);
+    }
 
     void setPitchBend (float v) { bend = std::clamp (v, -1.0f, 1.0f); }   // -1..1
     void setModWheel (float v) { wheel = std::clamp (v, 0.0f, 1.0f); }   // 0..1
@@ -116,6 +151,10 @@ public:
 
     void process (float& l, float& r)
     {
+        upperPlayer.tick (beat, hostSync);
+        lowerPlayer.tick (beat, hostSync);
+        beat += tempo / (60.0 * (double) sr);
+
         float ul = 0, ur = 0, ll = 0, lr = 0;
         upper.process (ul, ur);
         lower.process (ll, lr);
@@ -148,7 +187,10 @@ private:
         return isUpper;
     }
 
-    float bend = 0, wheel = 0, reduction = 1;
+    float bend = 0, wheel = 0, reduction = 1, sr = 48000;
+    double tempo = 120, beat = 0;
+    bool hostSync = false;
+    PlayerMode lastMode[2] { PlayerMode::Off, PlayerMode::Off };
     Limiter limiter;
     std::array<bool, 128> playedUpper {}, playedLower {};
 };

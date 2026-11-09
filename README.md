@@ -24,7 +24,7 @@ En Windows copia `Saturno 8.vst3` a `C:\Program Files\Common Files\VST3\`.
 1. Esqueleto + CI (hecho)
 2. Motor de voz y polifonía (hecho)
 3. Capas superior e inferior, interpretación y deriva analógica (hecho)
-4. Arpegiador y secuenciador
+4. Arpegiador y secuenciador (hecho)
 5. Efectos y matriz de modulación
 6. Interfaz gráfica
 7. Presets, MIDI learn y oversampling
@@ -73,3 +73,14 @@ Dos capas completas, **superior** e **inferior**, de 16 voces cada una y con tod
 
 ![Capa inferior](docs/interfaz_inferior.png)
 ![Global](docs/interfaz_global.png)
+
+## Arpegiador y secuenciador (fase 4)
+
+Cada capa tiene su propio reproductor, con tres modos: *Apagado*, *Arpegiador* o *Secuenciador*. Así se puede, por ejemplo, arpegiar la capa superior mientras la inferior toca una línea de bajo secuenciada.
+
+- **Arpegiador**: patrones *Arpegio* (de grave a agudo), *Salto* (la nota más grave alterna con cada una de las demás), *Orden* (en el orden en que se pulsaron) y *Azar*; dirección arriba, abajo, arriba-abajo o abajo-arriba; de 1 a 4 octavas.
+- **Secuenciador**: 16 pasos con nota relativa (±24 semitonos), silencio, **ligadura** y **acento**; de 1 a 16 pasos; recorrido en bucle, ida y vuelta o al azar. La secuencia suena mientras haya teclas pulsadas y se transporta desde la más grave. Los pasos se guardan con el proyecto.
+- **Comunes**: figura (1/4, 1/8, 1/8T, 1/16, 1/16T, 1/32), duración de la nota, **swing** (50–75 %), **probabilidad** de cada paso y **enganche** (las notas siguen al soltar; la siguiente tecla tras soltar todo empieza una frase nueva).
+- **Tempo**: con el DAW en marcha sigue su tempo y su rejilla; parado o en la app standalone usa el tempo propio (sección Máster) y la primera tecla marca el tiempo.
+
+En el panel, la rejilla **Secuencia** de cada capa: clic en el LED para paso o silencio, arrastrar o rueda sobre la nota para los semitonos (doble clic = 0), **L** para ligadura y **A** para acento. El paso que suena se ilumina.

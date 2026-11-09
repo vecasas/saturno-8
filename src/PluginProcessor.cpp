@@ -35,6 +35,10 @@ std::unique_ptr<juce::RangedAudioParameter> makeParam (const s8::ParamDef& d, co
         toText = [] (float v, int) { return juce::String (v, v < 10.0f ? 2 : 1) + " Hz"; };
     else if (sid == "vco2_fine" || sid == "bend_range")
         toText = [] (float v, int) { return (v > 0 ? "+" : "") + juce::String (v, 2) + " st"; };
+    else if (sid == "arp_gate" || sid == "arp_swing" || sid == "arp_chance")
+        toText = [] (float v, int) { return juce::String (juce::roundToInt (v * 100.0f)) + " %"; };
+    else if (sid == "tempo")
+        toText = [] (float v, int) { return juce::String (v, 1) + " BPM"; };
     else if (sid == "tune")
         toText = [] (float v, int) { return (v > 0 ? "+" : "") + juce::String (juce::roundToInt (v * 100.0f)) + " cents"; };
     return std::make_unique<juce::AudioParameterFloat> (id, name, range, d.def,
@@ -56,6 +60,8 @@ Saturno8Processor::Saturno8Processor()
     }
     for (auto& d : s8::globalParamDefs())
         global[d.id] = apvts.getRawParameterValue (d.id);
+    synth.upperPlayer.steps = &steps[0];
+    synth.lowerPlayer.steps = &steps[1];
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout Saturno8Processor::createLayout()
@@ -109,6 +115,11 @@ void Saturno8Processor::readLayer (s8::Layer& layer, const RawMap& m, int& last)
     a.mode = (s8::Assign) assign; a.priority = (s8::Priority) n ("priority"); a.legato = n ("trigger") == 0;
     a.unisonVoices = n ("uni_voices"); a.unisonDetune = f ("uni_detune"); a.polyVoices = n ("poly_voices");
 
+    auto& pp = (&layer == &synth.upper ? synth.upperPlayer : synth.lowerPlayer).p;
+    pp.mode = (s8::PlayerMode) n ("arp_mode"); pp.pattern = (s8::ArpPattern) n ("arp_pattern"); pp.dir = (s8::ArpDir) n ("arp_dir");
+    pp.range = n ("arp_range"); pp.division = n ("arp_div"); pp.gate = f ("arp_gate"); pp.swing = f ("arp_swing");
+    pp.chance = f ("arp_chance"); pp.hold = b ("arp_hold"); pp.length = n ("seq_len"); pp.play = (s8::SeqPlay) n ("seq_play");
+
     // Cambiar de modo de asignación suelta todo para empezar limpio.
     if (assign != last) { if (last >= 0) layer.allNotesOff(); last = assign; }
 }
@@ -137,6 +148,18 @@ void Saturno8Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     readLayer (synth.upper, raw[0], lastAssign[0]);
     readLayer (synth.lower, raw[1], lastAssign[1]);
     readGlobal();
+    synth.updatePlayers();
+
+    // Tempo y posición del DAW; sin DAW (o parado) se usa el tempo propio.
+    double bpm = global.at ("tempo")->load(), ppq = 0;
+    bool hostPlaying = false;
+    if (auto* ph = getPlayHead())
+        if (auto pos = ph->getPosition())
+        {
+            if (auto b = pos->getBpm()) bpm = *b;
+            if (auto q = pos->getPpqPosition(); q && pos->getIsPlaying()) { ppq = *q; hostPlaying = true; }
+        }
+    synth.setTransport (bpm, hostPlaying, ppq);
 
     if (chordRestore.exchange (false))
     {
@@ -181,6 +204,8 @@ void Saturno8Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         if (R != nullptr) { L[i] = l; R[i] = r; }
         else L[i] = 0.5f * (l + r);
     }
+    currentStep[0].store (synth.upperPlayer.currentStep());
+    currentStep[1].store (synth.lowerPlayer.currentStep());
     activeVoices[0].store (synth.upper.activeVoices());
     activeVoices[1].store (synth.lower.activeVoices());
     limiterReduction.store (minGain);
@@ -211,6 +236,12 @@ void Saturno8Processor::getStateInformation (juce::MemoryBlock& dest)
             state.setProperty (l == 0 ? "chord" : "chord_lower", chord.joinIntoString (","), nullptr);
         }
     }
+    for (int l = 0; l < 2; ++l)
+    {
+        juce::StringArray packed;
+        for (int i = 0; i < s8::kSeqSteps; ++i) packed.add (juce::String (steps[l].get (i).pack()));
+        state.setProperty (l == 0 ? "steps_upper" : "steps_lower", packed.joinIntoString (","), nullptr);
+    }
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, dest);
 }
@@ -225,6 +256,17 @@ void Saturno8Processor::setStateInformation (const void* data, int size)
             for (int l = 0; l < 2; ++l)
                 for (auto& t : juce::StringArray::fromTokens (tree.getProperty (l == 0 ? "chord" : "chord_lower").toString(), ",", ""))
                     if (chords[l].size() < (size_t) s8::kMaxVoices) chords[l].push_back (juce::jlimit (0, 96, t.getIntValue()));
+            for (int l = 0; l < 2; ++l)
+            {
+                steps[l].reset();
+                auto packed = juce::StringArray::fromTokens (tree.getProperty (l == 0 ? "steps_upper" : "steps_lower").toString(), ",", "");
+                for (int i = 0; i < juce::jmin (packed.size(), s8::kSeqSteps); ++i)
+                {
+                    auto st = s8::Step::unpack (packed[i].getIntValue());
+                    st.note = juce::jlimit (-24, 24, st.note);
+                    steps[l].set (i, st);
+                }
+            }
             apvts.replaceState (tree);
             const juce::SpinLock::ScopedLockType lock (chordLock);
             for (int l = 0; l < 2; ++l)

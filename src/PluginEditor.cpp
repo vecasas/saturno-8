@@ -4,12 +4,13 @@ namespace
 {
 const juce::Colour kBg (0xff17181b), kPanel (0xff24262b), kInk (0xffe9e4da), kAccent (0xffe0662f), kLower (0xff3fa7c9);
 constexpr int kMargin = 14, kHeader = 56, kTabsH = 30, kCell = 78, kCellH = 92, kRowH = kCellH + 30, kKeysH = 70, kFooter = 34;
+constexpr int kGridH = 92, kLayerRowsCount = 4, kWidthCells = 17;
 
 const std::vector<std::vector<const char*>> kLayerRows {
     { "VCO-1", "VCO-2", "Mod. VCO" },
     { "Mezcla", "VCF", "VCA" },
     { "ENV-1", "ENV-2", "LFO" },
-    { "Asignación" },
+    { "Asignación", "Arpegiador" },
 };
 const std::vector<std::vector<const char*>> kGlobalRows {
     { "Teclado", "Máster" },
@@ -72,8 +73,11 @@ void Saturno8Editor::build (const std::vector<s8::ParamDef>& defs, std::vector<s
 
 Saturno8Editor::Saturno8Editor (Saturno8Processor& p)
     : AudioProcessorEditor (&p), proc (p),
+      grids { { p.steps[0], p.currentStep[0] }, { p.steps[1], p.currentStep[1] } },
       keyboard (p.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard)
 {
+    for (auto& gr : grids) addChildComponent (gr);
+    grids[1].setColour (kLower);
     build (s8::layerParamDefs(), layerControls);
     build (s8::globalParamDefs(), globalControls);
     for (auto& c : globalControls) c->attach (proc.apvts, c->def->id);
@@ -92,7 +96,7 @@ Saturno8Editor::Saturno8Editor (Saturno8Processor& p)
     keyboard.setOctaveForMiddleC (4);
     addAndMakeVisible (keyboard);
 
-    setSize (kMargin * 2 + 16 * kCell + 3 * 16 + 4, kHeader + kTabsH + 8 + 4 * kRowH + kFooter + kKeysH + kMargin);
+    setSize (kMargin * 2 + kWidthCells * kCell + 2 * 16 + 4, kHeader + kTabsH + 8 + kLayerRowsCount * kRowH + 24 + kGridH + 8 + kFooter + kKeysH + kMargin);
     tabs.onChange = [this] (int index) { if (index != page) showPage (index); };
     showPage (0);
     timerCallback();
@@ -119,6 +123,8 @@ void Saturno8Editor::showPage (int newPage)
         c->label.setVisible (! isLayer);
     }
     chordButton.setVisible (isLayer);
+    grids[0].setVisible (page == 0);
+    grids[1].setVisible (page == 1);
     resized();
     repaint();
     timerCallback();
@@ -132,7 +138,7 @@ void Saturno8Editor::paint (juce::Graphics& g)
     g.drawText ("SATURNO 8", kMargin, 12, 300, 32, juce::Justification::left);
     g.setFont (juce::FontOptions (12.0f));
     g.setColour (kInk.withAlpha (0.55f));
-    g.drawText (utf8 ("Fase 3: dos capas, teclado, interpretación y deriva"), kMargin + 170, 22, 500, 18, juce::Justification::left);
+    g.drawText (utf8 ("Fase 4: dos capas con arpegiador y secuenciador"), kMargin + 170, 22, 500, 18, juce::Justification::left);
 
     const juce::Colour colour = page == 1 ? kLower : kAccent;
     for (auto& [name, box] : sectionBoxes)
@@ -144,6 +150,14 @@ void Saturno8Editor::paint (juce::Graphics& g)
         g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
         g.drawText (name.toUpperCase().replace (utf8 ("\xc3\xb3"), utf8 ("\xc3\x93")).replace (utf8 ("\xc3\xa1"), utf8 ("\xc3\x81")),
                     r.removeFromTop (20).reduced (8, 0), juce::Justification::left);
+        if (name == "Secuencia")
+        {
+            g.setColour (kInk.withAlpha (0.5f));
+            g.setFont (juce::FontOptions (11.0f));
+            g.drawText (utf8 ("Suena con el modo Secuenciador, transportada desde la tecla más grave · LED: paso o silencio · "
+                              "arrastra la nota para cambiar los semitonos · L: ligadura · A: acento"),
+                        box.withHeight (20).withTrimmedLeft (90).toFloat(), juce::Justification::left);
+        }
     }
 }
 
@@ -183,7 +197,14 @@ void Saturno8Editor::resized()
     if (page < 2) layoutRows (kLayerRows, layerControls, top);
     else layoutRows (kGlobalRows, globalControls, top);
 
-    const int y = top + 4 * kRowH;
+    const int gridTop = top + kLayerRowsCount * kRowH;
+    if (page < 2)
+    {
+        sectionBoxes.push_back ({ utf8 ("Secuencia"),
+                                  { kMargin, gridTop, getWidth() - 2 * kMargin, kGridH + 24 } });
+        grids[page].setBounds (kMargin + 6, gridTop + 22, getWidth() - 2 * kMargin - 12, kGridH - 2);
+    }
+    const int y = gridTop + kGridH + 32;
     chordButton.setBounds (kMargin, y, 140, 26);
     status.setBounds (kMargin + 150, y, getWidth() - 2 * kMargin - 150, 26);
     keyboard.setBounds (kMargin, y + kFooter, getWidth() - 2 * kMargin, kKeysH);
@@ -193,7 +214,12 @@ void Saturno8Editor::resized()
 void Saturno8Editor::timerCallback()
 {
     juce::String text;
-    if (page < 2) text << "Acorde: " << proc.chordDescription (page) << "   ·   ";
+    if (page < 2)
+    {
+        text << "Acorde: " << proc.chordDescription (page) << "   ·   ";
+        if (auto* len = proc.apvts.getRawParameterValue (Saturno8Processor::pid (Saturno8Processor::kPrefix[page], "seq_len")))
+            grids[page].setLength ((int) len->load());
+    }
     text << "Voces: " << proc.activeVoices[0].load() << " sup. + " << proc.activeVoices[1].load() << " inf.";
     const float red = proc.limiterReduction.load();
     if (red < 0.99f) text << "   ·   Limitador: " << juce::String (juce::Decibels::gainToDecibels (red), 1) << " dB";

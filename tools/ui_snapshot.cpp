@@ -16,6 +16,15 @@ int main (int argc, char** argv)
     // Modo doble con la capa inferior una octava abajo, para ver las dos capas en marcha.
     if (auto* p = proc.apvts.getParameter ("key_mode")) p->setValueNotifyingHost (p->convertTo0to1 (1));
     if (auto* p = proc.apvts.getParameter ("l_vco1_range")) p->setValueNotifyingHost (p->convertTo0to1 (0));
+    // Arpegiador en la superior y una secuencia de ejemplo en la inferior.
+    if (auto* p = proc.apvts.getParameter ("u_arp_mode")) p->setValueNotifyingHost (p->convertTo0to1 (1));
+    if (auto* p = proc.apvts.getParameter ("l_arp_mode")) p->setValueNotifyingHost (p->convertTo0to1 (2));
+    if (auto* p = proc.apvts.getParameter ("l_seq_len")) p->setValueNotifyingHost (p->convertTo0to1 (12));
+    {
+        const int notes[] { 0, 0, 12, 0, 7, 0, 10, 12, 0, 3, 5, 7 };
+        for (int i = 0; i < 12; ++i)
+            proc.steps[1].set (i, { notes[i], i != 5, i == 8, i % 4 == 0 });
+    }
     // Un acorde de prueba: comprueba también que el procesador suena.
     juce::AudioBuffer<float> buf (2, 512);
     juce::MidiBuffer midi;
@@ -23,7 +32,7 @@ int main (int argc, char** argv)
     float peak = 0;
     for (int b = 0; b < 20; ++b) { proc.processBlock (buf, midi); midi.clear(); peak = std::max (peak, buf.getMagnitude (0, 512)); }
     std::printf ("Pico de audio: %.3f, voces: %d sup. + %d inf.\n", peak, proc.activeVoices[0].load(), proc.activeVoices[1].load());
-    if (peak <= 0.01f || proc.activeVoices[0].load() != 3 || proc.activeVoices[1].load() != 3) return 1;
+    if (peak <= 0.01f || proc.activeVoices[0].load() < 1 || proc.activeVoices[1].load() < 1) return 1;
     std::unique_ptr<juce::AudioProcessorEditor> ed (proc.createEditor());
     if (auto* s8ed = dynamic_cast<Saturno8Editor*> (ed.get())) s8ed->showPageForSnapshot (page);
     auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, scale);
