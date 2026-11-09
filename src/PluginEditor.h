@@ -1,5 +1,6 @@
 #pragma once
 #include "PluginProcessor.h"
+#include "StepGrid.h"
 
 // Panel funcional por secciones con pestañas para cada capa y los controles globales
 // (la interfaz definitiva llega en la fase 6).
@@ -41,6 +42,7 @@ private:
         std::function<void (int)> onChange;
         void currentTabChanged (int index, const juce::String&) override { if (onChange) onChange (index); }
     } tabs;
+    StepGrid grids[2];
     juce::TextButton chordButton { "Aprender acorde" };
     juce::Label status;
     juce::MidiKeyboardComponent keyboard;

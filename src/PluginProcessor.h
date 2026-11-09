@@ -5,7 +5,7 @@
 #include <unordered_map>
 
 // Saturno 8: sintetizador polifónico analógico modelado (diseño propio).
-// Fase 3: dos capas de 16 voces, modos de teclado, interpretación y deriva analógica.
+// Fase 4: dos capas de 16 voces con arpegiador o secuenciador de pasos cada una.
 class Saturno8Processor : public juce::AudioProcessor
 {
 public:
@@ -48,6 +48,10 @@ public:
     juce::String chordDescription (int layer) const;
     std::atomic<int> activeVoices[2] { 0, 0 };
     std::atomic<float> limiterReduction { 1.0f };
+
+    // Pasos del secuenciador de cada capa (los edita la interfaz sin bloqueos).
+    s8::StepData steps[2];
+    std::atomic<int> currentStep[2] { -1, -1 };
 
 private:
     using RawMap = std::unordered_map<std::string_view, std::atomic<float>*>;
