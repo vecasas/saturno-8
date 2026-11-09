@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+          - os: windows-latest
+            name: Windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Saturno8-${{ matrix.name }}
+          path: |
+            build/Saturno8_artefacts/Release/VST3
+            build/Saturno8_artefacts/Release/AU
+            build/Saturno8_artefacts/Release/Standalone
