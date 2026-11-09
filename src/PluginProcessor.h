@@ -5,7 +5,8 @@
 #include <unordered_map>
 
 // Saturno 8: sintetizador polifónico analógico modelado (diseño propio).
-// Fase 5: dos capas con arpegiador o secuenciador, efectos por capa y globales, y matriz de modulación.
+// Dos capas con arpegiador o secuenciador, efectos, matriz de modulación, presets,
+// MIDI learn y sobremuestreo.
 class Saturno8Processor : public juce::AudioProcessor
 {
 public:
@@ -26,10 +27,11 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 8.0; }
 
-    int getNumPrograms() override { return 1; }
-    int getCurrentProgram() override { return 0; }
-    void setCurrentProgram (int) override {}
-    const juce::String getProgramName (int) override { return {}; }
+    // Programas del DAW = presets de fábrica.
+    int getNumPrograms() override;
+    int getCurrentProgram() override { return juce::jmax (0, currentProgram); }
+    void setCurrentProgram (int) override;
+    const juce::String getProgramName (int) override;
     void changeProgramName (int, const juce::String&) override {}
 
     void getStateInformation (juce::MemoryBlock&) override;
@@ -53,7 +55,39 @@ public:
     s8::StepData steps[2];
     std::atomic<int> currentStep[2] { -1, -1 };
 
+    // Presets: de fábrica (en el código) y del usuario (Documentos/Saturno 8/Presets/*.s8preset).
+    static juce::File userPresetFolder();
+    static juce::StringArray factoryNames();
+    static juce::Array<juce::File> userPresets();
+    void loadFactoryPreset (int index);
+    bool loadUserPreset (const juce::File&);
+    bool saveUserPreset (const juce::String& name);
+    void stepPreset (int delta);
+    juce::String currentPresetName() const { return presetName; }
+    std::atomic<bool> presetChanged { false };
+
+    // MIDI learn: el siguiente CC que llegue controlará el parámetro.
+    void startMidiLearn (juce::RangedAudioParameter*);
+    void forgetMidi (juce::RangedAudioParameter*);
+    int ccFor (const juce::RangedAudioParameter*) const;
+    bool isLearning (const juce::RangedAudioParameter* p) const { return learnTarget.load() == p; }
+    std::atomic<bool> midiMapChanged { false };
+
 private:
+    juce::ValueTree makeState();
+    void applyState (juce::ValueTree);
+    void applyQuality (int newFactor);
+    void handleMidi (const juce::MidiMessage&, bool& controlsChanged);
+
+    double hostRate = 48000;
+    int maxBlock = 512, factor = 0;
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversamplers[2];   // x2 y x4
+    juce::AudioBuffer<float> work;
+    juce::String presetName { "Inicial" };
+    int currentProgram = 0;
+    std::array<std::atomic<juce::RangedAudioParameter*>, 128> ccMap {};
+    std::atomic<juce::RangedAudioParameter*> learnTarget { nullptr };
+
     using RawMap = std::unordered_map<std::string_view, std::atomic<float>*>;
     void readLayer (s8::Layer&, const RawMap&, int& lastAssign);
     void readGlobal();

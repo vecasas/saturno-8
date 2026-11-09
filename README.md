@@ -27,7 +27,7 @@ En Windows copia `Saturno 8.vst3` a `C:\Program Files\Common Files\VST3\`.
 4. Arpegiador y secuenciador (hecho)
 5. Efectos y matriz de modulación (hecho)
 6. Interfaz gráfica (hecho)
-7. Presets, MIDI learn y oversampling
+7. Presets, MIDI learn y oversampling (hecho)
 
 ## Motor de voz (fase 2)
 
@@ -109,3 +109,13 @@ Diseño propio dibujado por código, sin imágenes: panel grafito con franjas de
 - La ventana se puede redimensionar del 50 % al 200 % manteniendo la proporción; se abre al 80 %.
 
 ![Efectos y matriz](docs/interfaz_efectos.png)
+
+## Presets, MIDI learn y sobremuestreo (fase 7)
+
+- **Presets**: la barra de la cabecera tiene anterior / siguiente, el nombre (clic = menú) y **Guardar**.
+  - **De fábrica**: 14 sonidos de programación propia (Inicial, Metales del anillo, Cuerdas de Titán, Pad pulsante, Bajo Encélado, Lead sincronizado, Campanas de hielo, Arpegio orbital, Secuencia de Febe, Doble: piano y pad, División: bajo y metales, Acorde menor 9, Barrido con ruido y Viejo y desafinado). El DAW también los ve como programas.
+  - **Tuyos**: guardan todo el sonido de las dos capas, los efectos, el acorde y las secuencias, en `Documentos/Saturno 8/Presets` como archivos `.s8preset` que se pueden copiar entre Mac y Windows. Cargar un preset no cambia el volumen general, el tempo, la calidad ni el mapa MIDI.
+- **MIDI learn**: clic derecho en cualquier control → *Aprender MIDI* y mueve un mando del controlador; *Olvidar MIDI* lo quita. La pantalla avisa mientras espera. El mapa se guarda con el proyecto del DAW.
+- **Calidad** (sección Máster): x1, x2 o x4. Con x2 y x4 el motor calcula internamente a doble o cuádruple frecuencia (menos aliasing en sync, cruzada y resonancia alta) a cambio de más CPU. Cambiarla reinicia las voces.
+
+Comprobaciones con `ui_snapshot`: los 14 presets suenan sin NaN a x1 y a x4, y el estado (preset, secuencia y mapa MIDI) se guarda y se recupera igual.
