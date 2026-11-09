@@ -47,7 +47,9 @@ target_sources(Saturno8 PRIVATE
     src/dsp/Synth.h
     src/seq/Player.h
     src/StepGrid.h
-    src/fx/Effects.h)
+    src/fx/Effects.h
+    src/ui/Theme.h
+    src/ui/ChoiceKeys.h)
 
 # Los textos de la interfaz llevan acentos: compilar como UTF-8 también en Windows.
 if(MSVC)

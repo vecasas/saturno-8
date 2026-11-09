@@ -26,7 +26,7 @@ En Windows copia `Saturno 8.vst3` a `C:\Program Files\Common Files\VST3\`.
 3. Capas superior e inferior, interpretación y deriva analógica (hecho)
 4. Arpegiador y secuenciador (hecho)
 5. Efectos y matriz de modulación (hecho)
-6. Interfaz gráfica
+6. Interfaz gráfica (hecho)
 7. Presets, MIDI learn y oversampling
 
 ## Motor de voz (fase 2)
@@ -54,7 +54,6 @@ Síntesis analógica modelada, sin samples. Cada voz tiene:
 
 También: pedal de sostenido (CC 64), «Voces poli» limita la polifonía, y la interfaz trae un teclado para tocar sin controlador.
 
-La interfaz de esta fase es un panel funcional; la definitiva llega en la fase 6.
 
 `render_demo <carpeta>` genera sonidos de ejemplo en WAV (metales, pad PWM, bajo solo, lead sync en unísono, campanas con cruzada, memoria de acorde y, desde la fase 3, las dos capas en división) y mide cuántas veces más rápido que el tiempo real calcula el motor.
 
@@ -98,5 +97,15 @@ Tres cadenas de efectos: una por capa y otra global, en este orden: capa → efe
 - **Matriz de modulación** por capa, 4 ranuras: fuente → destino con cantidad bipolar (±100 %).
   - Fuentes: LFO, ENV-1, ENV-2, velocidad, teclado, rueda, aftertouch, bender y un valor al azar por nota.
   - Destinos: tono (los dos VCO o cada uno, ±24 st), ancho de pulso, cruzada, nivel de VCO-2, paso alto, corte (±5 octavas), resonancia, nivel y panorama.
+
+
+## Interfaz (fase 6)
+
+Diseño propio dibujado por código, sin imágenes: panel grafito con franjas de color por familia (osciladores en naranja, filtro y VCA en rojo, envolventes en mostaza, LFO y matriz en verde, teclado y asignación en azul, arpegiador en violeta), faders con capuchón crema y escala, teclas con LED para elegir opciones y una pantalla ámbar con la página, el acorde guardado, las voces que suenan, el tempo y la reducción del limitador.
+
+- **Pestañas**: *Capa superior*, *Capa inferior*, *Efectos sup.*, *Efectos inf.* y *Global*. En las páginas de la capa inferior todo se tiñe de azul para no confundir qué capa se edita.
+- **Faders**: arrastrar para mover, doble clic para volver al valor de fábrica; el valor aparece debajo y en una burbuja al arrastrar.
+- **Opciones**: las de hasta 5 valores son teclas con LED; las largas (figura del delay, fuentes y destinos de la matriz) usan la pantalla ámbar.
+- La ventana se puede redimensionar del 50 % al 200 % manteniendo la proporción; se abre al 80 %.
 
 ![Efectos y matriz](docs/interfaz_efectos.png)
