@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "FactoryPresets.h"
 
 namespace
 {
@@ -93,11 +94,54 @@ bool Saturno8Processor::isBusesLayoutSupported (const BusesLayout& layouts) cons
     return out == juce::AudioChannelSet::stereo() || out == juce::AudioChannelSet::mono();
 }
 
-void Saturno8Processor::prepareToPlay (double sampleRate, int)
+void Saturno8Processor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    synth.setSampleRate ((float) sampleRate);
-    synth.reset();
+    hostRate = sampleRate;
+    maxBlock = juce::jmax (1, samplesPerBlock);
+    for (int k = 0; k < 2; ++k)
+    {
+        oversamplers[k] = std::make_unique<juce::dsp::Oversampling<float>> (
+            2, k + 1, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false);
+        oversamplers[k]->initProcessing ((size_t) maxBlock);
+    }
+    work.setSize (2, maxBlock);
+    factor = 0;   // se aplica en el primer bloque
     keyboardState.reset();
+}
+
+void Saturno8Processor::applyQuality (int newFactor)
+{
+    // Cambiar de calidad reinicia el motor a la nueva frecuencia interna (puede cortar las notas).
+    factor = newFactor;
+    synth.setSampleRate ((float) (hostRate * factor));
+    synth.reset();
+    lastAssign[0] = lastAssign[1] = -1;
+    setLatencySamples (factor == 1 ? 0 : juce::roundToInt (oversamplers[factor == 2 ? 0 : 1]->getLatencyInSamples()));
+}
+
+void Saturno8Processor::handleMidi (const juce::MidiMessage& msg, bool& controlsChanged)
+{
+    if (msg.isNoteOn()) synth.noteOn (msg.getNoteNumber(), msg.getFloatVelocity());
+    else if (msg.isNoteOff()) synth.noteOff (msg.getNoteNumber());
+    else if (msg.isSustainPedalOn()) synth.setSustain (true);
+    else if (msg.isSustainPedalOff()) synth.setSustain (false);
+    else if (msg.isAllNotesOff() || msg.isAllSoundOff()) synth.allNotesOff();
+    else if (msg.isPitchWheel()) { synth.setPitchBend ((float) (msg.getPitchWheelValue() - 8192) / 8192.0f); controlsChanged = true; }
+    else if (msg.isChannelPressure()) { synth.setAftertouch ((float) msg.getChannelPressureValue() / 127.0f); controlsChanged = true; }
+    else if (msg.isController())
+    {
+        const int cc = msg.getControllerNumber();
+        if (cc == 1) { synth.setModWheel ((float) msg.getControllerValue() / 127.0f); controlsChanged = true; }
+        // MIDI learn: el primer CC que llega se asigna al control que espera.
+        if (auto* target = learnTarget.exchange (nullptr))
+        {
+            for (auto& m : ccMap) if (m.load() == target) m.store (nullptr);
+            ccMap[(size_t) cc].store (target);
+            midiMapChanged.store (true);
+        }
+        if (auto* p = ccMap[(size_t) cc].load())
+            p->setValueNotifyingHost ((float) msg.getControllerValue() / 127.0f);
+    }
 }
 
 void Saturno8Processor::readLayer (s8::Layer& layer, const RawMap& m, int& last)
@@ -204,33 +248,57 @@ void Saturno8Processor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         }
     }
 
-    auto* L = buffer.getWritePointer (0);
-    auto* R = buffer.getNumChannels() > 1 ? buffer.getWritePointer (1) : nullptr;
+    const int quality = 1 << juce::jlimit (0, 2, (int) std::lround (global.at ("quality")->load()));
+    if (quality != factor) applyQuality (quality);
+
+    const int n = buffer.getNumSamples();
     float minGain = 1.0f;
-
     auto midiIt = midi.cbegin();
-    for (int i = 0; i < buffer.getNumSamples(); ++i)
+    // Calcula un trozo de "count" muestras internas (ya sobremuestreadas) que empieza en "offset" del bloque.
+    auto render = [&] (float* L, float* R, int count, int offset)
     {
-        bool controlsChanged = i == 0;
-        for (; midiIt != midi.cend() && (*midiIt).samplePosition <= i; ++midiIt)
+        for (int i = 0; i < count; ++i)
         {
-            const auto msg = (*midiIt).getMessage();
-            if (msg.isNoteOn()) synth.noteOn (msg.getNoteNumber(), msg.getFloatVelocity());
-            else if (msg.isNoteOff()) synth.noteOff (msg.getNoteNumber());
-            else if (msg.isSustainPedalOn()) synth.setSustain (true);
-            else if (msg.isSustainPedalOff()) synth.setSustain (false);
-            else if (msg.isAllNotesOff() || msg.isAllSoundOff()) synth.allNotesOff();
-            else if (msg.isPitchWheel()) { synth.setPitchBend ((float) (msg.getPitchWheelValue() - 8192) / 8192.0f); controlsChanged = true; }
-            else if (msg.isControllerOfType (1)) { synth.setModWheel ((float) msg.getControllerValue() / 127.0f); controlsChanged = true; }
-            else if (msg.isChannelPressure()) { synth.setAftertouch ((float) msg.getChannelPressureValue() / 127.0f); controlsChanged = true; }
+            bool controlsChanged = i == 0;
+            for (; midiIt != midi.cend() && ((*midiIt).samplePosition - offset) * factor <= i; ++midiIt)
+                handleMidi ((*midiIt).getMessage(), controlsChanged);
+            if (controlsChanged) synth.updatePlay();
+            float l = 0, r = 0;
+            synth.process (l, r);
+            minGain = std::min (minGain, synth.lastReduction());
+            L[i] = l; R[i] = r;
         }
-        if (controlsChanged) synth.updatePlay();
+    };
 
-        float l = 0, r = 0;
-        synth.process (l, r);
-        minGain = std::min (minGain, synth.lastReduction());
-        if (R != nullptr) { L[i] = l; R[i] = r; }
-        else L[i] = 0.5f * (l + r);
+    if (n > work.getNumSamples()) work.setSize (2, n, false, false, true);   // bloque mayor de lo anunciado
+    work.clear();
+    // Por trozos de como mucho maxBlock muestras (lo que admite el sobremuestreo preparado).
+    for (int offset = 0; offset < n; offset += maxBlock)
+    {
+        const int len = juce::jmin (maxBlock, n - offset);
+        float* chans[2] { work.getWritePointer (0) + offset, work.getWritePointer (1) + offset };
+        if (factor == 1)
+            render (chans[0], chans[1], len, offset);
+        else
+        {
+            auto& os = *oversamplers[factor == 2 ? 0 : 1];
+            juce::dsp::AudioBlock<float> block (chans, 2, (size_t) len);
+            auto up = os.processSamplesUp (block);
+            render (up.getChannelPointer (0), up.getChannelPointer (1), (int) up.getNumSamples(), offset);
+            os.processSamplesDown (block);
+        }
+    }
+    for (; midiIt != midi.cend(); ++midiIt) { bool dummy = false; handleMidi ((*midiIt).getMessage(), dummy); }
+    if (buffer.getNumChannels() > 1)
+    {
+        buffer.copyFrom (0, 0, work, 0, 0, n);
+        buffer.copyFrom (1, 0, work, 1, 0, n);
+    }
+    else
+    {
+        buffer.copyFrom (0, 0, work, 0, 0, n);
+        buffer.applyGain (0, 0, n, 0.5f);
+        buffer.addFrom (0, 0, work, 1, 0, n, 0.5f);
     }
     currentStep[0].store (synth.upperPlayer.currentStep());
     currentStep[1].store (synth.lowerPlayer.currentStep());
@@ -252,7 +320,7 @@ juce::AudioProcessorEditor* Saturno8Processor::createEditor()
     return new Saturno8Editor (*this);
 }
 
-void Saturno8Processor::getStateInformation (juce::MemoryBlock& dest)
+juce::ValueTree Saturno8Processor::makeState()
 {
     auto state = apvts.copyState();
     {
@@ -270,6 +338,55 @@ void Saturno8Processor::getStateInformation (juce::MemoryBlock& dest)
         for (int i = 0; i < s8::kSeqSteps; ++i) packed.add (juce::String (steps[l].get (i).pack()));
         state.setProperty (l == 0 ? "steps_upper" : "steps_lower", packed.joinIntoString (","), nullptr);
     }
+    state.setProperty ("preset", presetName, nullptr);
+    return state;
+}
+
+void Saturno8Processor::applyState (juce::ValueTree tree)
+{
+    std::vector<int> chords[2];
+    for (int l = 0; l < 2; ++l)
+        for (auto& t : juce::StringArray::fromTokens (tree.getProperty (l == 0 ? "chord" : "chord_lower").toString(), ",", ""))
+            if (chords[l].size() < (size_t) s8::kMaxVoices) chords[l].push_back (juce::jlimit (0, 96, t.getIntValue()));
+    for (int l = 0; l < 2; ++l)
+    {
+        steps[l].reset();
+        auto packed = juce::StringArray::fromTokens (tree.getProperty (l == 0 ? "steps_upper" : "steps_lower").toString(), ",", "");
+        for (int i = 0; i < juce::jmin (packed.size(), s8::kSeqSteps); ++i)
+        {
+            auto st = s8::Step::unpack (packed[i].getIntValue());
+            st.note = juce::jlimit (-24, 24, st.note);
+            steps[l].set (i, st);
+        }
+    }
+    if (tree.hasProperty ("preset")) presetName = tree.getProperty ("preset").toString();
+    // Los parámetros que falten (estados de versiones anteriores) vuelven a su valor por defecto.
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+        {
+            bool found = false;
+            for (auto child : tree)
+                if (child.hasType ("PARAM") && child.getProperty ("id").toString() == rp->getParameterID()) { found = true; break; }
+            if (! found) tree.appendChild (juce::ValueTree ("PARAM", { { "id", rp->getParameterID() }, { "value", rp->convertFrom0to1 (rp->getDefaultValue()) } }), nullptr);
+        }
+    apvts.replaceState (tree);
+    const juce::SpinLock::ScopedLockType lock (chordLock);
+    for (int l = 0; l < 2; ++l)
+    {
+        if (chords[l].empty()) chords[l] = { 0, 4, 7 };
+        chordCopy[l].assign (chords[l].begin(), chords[l].end());
+        pendingChord[l].assign (chords[l].begin(), chords[l].end());
+    }
+    chordRestore.store (true);
+}
+
+void Saturno8Processor::getStateInformation (juce::MemoryBlock& dest)
+{
+    auto state = makeState();
+    juce::StringArray map;
+    for (int cc = 0; cc < 128; ++cc)
+        if (auto* p = ccMap[(size_t) cc].load()) map.add (juce::String (cc) + "=" + p->getParameterID());
+    state.setProperty ("midimap", map.joinIntoString (";"), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, dest);
 }
@@ -280,31 +397,154 @@ void Saturno8Processor::setStateInformation (const void* data, int size)
         if (xml->hasTagName (apvts.state.getType()))
         {
             auto tree = juce::ValueTree::fromXml (*xml);
-            std::vector<int> chords[2];
-            for (int l = 0; l < 2; ++l)
-                for (auto& t : juce::StringArray::fromTokens (tree.getProperty (l == 0 ? "chord" : "chord_lower").toString(), ",", ""))
-                    if (chords[l].size() < (size_t) s8::kMaxVoices) chords[l].push_back (juce::jlimit (0, 96, t.getIntValue()));
-            for (int l = 0; l < 2; ++l)
+            for (auto& m : ccMap) m.store (nullptr);
+            for (auto& item : juce::StringArray::fromTokens (tree.getProperty ("midimap").toString(), ";", ""))
             {
-                steps[l].reset();
-                auto packed = juce::StringArray::fromTokens (tree.getProperty (l == 0 ? "steps_upper" : "steps_lower").toString(), ",", "");
-                for (int i = 0; i < juce::jmin (packed.size(), s8::kSeqSteps); ++i)
-                {
-                    auto st = s8::Step::unpack (packed[i].getIntValue());
-                    st.note = juce::jlimit (-24, 24, st.note);
-                    steps[l].set (i, st);
-                }
+                const int cc = item.upToFirstOccurrenceOf ("=", false, false).getIntValue();
+                if (auto* p = apvts.getParameter (item.fromFirstOccurrenceOf ("=", false, false)); p != nullptr && cc >= 0 && cc < 128)
+                    ccMap[(size_t) cc].store (p);
             }
-            apvts.replaceState (tree);
-            const juce::SpinLock::ScopedLockType lock (chordLock);
-            for (int l = 0; l < 2; ++l)
-            {
-                if (chords[l].empty()) chords[l] = { 0, 4, 7 };
-                chordCopy[l].assign (chords[l].begin(), chords[l].end());
-                pendingChord[l].assign (chords[l].begin(), chords[l].end());
-            }
-            chordRestore.store (true);
+            midiMapChanged.store (true);
+            applyState (tree);
         }
+}
+
+// ------------------------------------------------------------------ presets
+juce::File Saturno8Processor::userPresetFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Saturno 8").getChildFile ("Presets");
+}
+
+juce::StringArray Saturno8Processor::factoryNames()
+{
+    juce::StringArray names;
+    int count = 0;
+    auto* list = s8::factoryPresets (count);
+    for (int i = 0; i < count; ++i) names.add (juce::String (juce::CharPointer_UTF8 (list[i].name)));
+    return names;
+}
+
+juce::Array<juce::File> Saturno8Processor::userPresets()
+{
+    auto files = userPresetFolder().findChildFiles (juce::File::findFiles, false, "*.s8preset");
+    files.sort();
+    return files;
+}
+
+void Saturno8Processor::loadFactoryPreset (int index)
+{
+    int count = 0;
+    auto* list = s8::factoryPresets (count);
+    if (index < 0 || index >= count) return;
+    currentProgram = index;
+
+    // Todo a su valor por defecto, salvo lo que no es sonido (MIDI, calidad, tempo).
+    for (auto* p : getParameters())
+        if (auto* rp = dynamic_cast<juce::RangedAudioParameter*> (p))
+        {
+            const auto id = rp->getParameterID();
+            if (id == "quality" || id == "tempo" || id == "master") continue;
+            rp->setValueNotifyingHost (rp->getDefaultValue());
+        }
+    for (auto& st : steps) st.reset();
+    std::vector<int> chord { 0, 4, 7 };
+
+    for (auto& token : juce::StringArray::fromTokens (juce::String (juce::CharPointer_UTF8 (list[index].values)), " ", ""))
+    {
+        const auto key = token.upToFirstOccurrenceOf ("=", false, false);
+        const auto val = token.fromFirstOccurrenceOf ("=", false, false);
+        if (key == "chord")
+        {
+            chord.clear();
+            for (auto& t : juce::StringArray::fromTokens (val, ",", "")) chord.push_back (t.getIntValue());
+        }
+        else if (key == "useq" || key == "lseq")
+        {
+            auto& data = steps[key == "useq" ? 0 : 1];
+            auto items = juce::StringArray::fromTokens (val, ",", "");
+            for (int i = 0; i < juce::jmin (items.size(), s8::kSeqSteps); ++i)
+            {
+                s8::Step st;
+                auto parts = juce::StringArray::fromTokens (items[i], ":", "");
+                st.note = parts[0] == "-" ? 0 : parts[0].getIntValue();
+                st.on = ! parts.contains ("-");
+                st.tie = parts.contains ("L");
+                st.accent = parts.contains ("A");
+                data.set (i, st);
+            }
+        }
+        else if (auto* p = apvts.getParameter (key))
+            p->setValueNotifyingHost (p->convertTo0to1 (val.getFloatValue()));
+    }
+    {
+        const juce::SpinLock::ScopedLockType lock (chordLock);
+        for (int l = 0; l < 2; ++l) { chordCopy[l].assign (chord.begin(), chord.end()); pendingChord[l].assign (chord.begin(), chord.end()); }
+        chordRestore.store (true);
+    }
+    presetName = juce::String (juce::CharPointer_UTF8 (list[index].name));
+    presetChanged.store (true);
+}
+
+bool Saturno8Processor::loadUserPreset (const juce::File& file)
+{
+    auto xml = juce::XmlDocument::parse (file);
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType())) return false;
+    auto tree = juce::ValueTree::fromXml (*xml);
+    tree.setProperty ("preset", file.getFileNameWithoutExtension(), nullptr);
+    // La calidad, el tempo y el volumen general no cambian al cargar un preset.
+    for (auto id : { "quality", "tempo", "master" })
+        if (auto* p = apvts.getParameter (id))
+            for (auto child : tree)
+                if (child.getProperty ("id").toString() == id) child.setProperty ("value", p->convertFrom0to1 (p->getValue()), nullptr);
+    applyState (tree);
+    currentProgram = -1;
+    presetChanged.store (true);
+    return true;
+}
+
+bool Saturno8Processor::saveUserPreset (const juce::String& name)
+{
+    const auto clean = juce::File::createLegalFileName (name.trim());
+    if (clean.isEmpty()) return false;
+    auto folder = userPresetFolder();
+    if (! folder.createDirectory()) return false;
+    presetName = clean;
+    auto state = makeState();
+    auto xml = state.createXml();
+    if (xml == nullptr || ! xml->writeTo (folder.getChildFile (clean + ".s8preset"))) return false;
+    currentProgram = -1;
+    presetChanged.store (true);
+    return true;
+}
+
+void Saturno8Processor::stepPreset (int delta)
+{
+    const auto factory = factoryNames();
+    const auto user = userPresets();
+    const int total = factory.size() + user.size();
+    int index = currentProgram;
+    if (index < 0)
+        for (int i = 0; i < user.size(); ++i) if (user[i].getFileNameWithoutExtension() == presetName) index = factory.size() + i;
+    index = ((index < 0 ? 0 : index + delta) % total + total) % total;
+    if (index < factory.size()) loadFactoryPreset (index);
+    else loadUserPreset (user[index - factory.size()]);
+}
+
+void Saturno8Processor::setCurrentProgram (int index) { loadFactoryPreset (index); }
+int Saturno8Processor::getNumPrograms() { return factoryNames().size(); }
+const juce::String Saturno8Processor::getProgramName (int index) { return factoryNames()[index]; }
+
+// ------------------------------------------------------------------ MIDI learn
+void Saturno8Processor::startMidiLearn (juce::RangedAudioParameter* p) { learnTarget.store (p); }
+void Saturno8Processor::forgetMidi (juce::RangedAudioParameter* p)
+{
+    for (auto& m : ccMap) if (m.load() == p) m.store (nullptr);
+    midiMapChanged.store (true);
+}
+int Saturno8Processor::ccFor (const juce::RangedAudioParameter* p) const
+{
+    for (int cc = 0; cc < 128; ++cc) if (ccMap[(size_t) cc].load() == p) return cc;
+    return -1;
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

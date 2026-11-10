@@ -111,6 +111,7 @@ void SaturnoPanel::build (const std::vector<s8::ParamDef>& defs, std::vector<std
             c->comp = std::move (s);
         }
         addChildComponent (*c->comp);
+        c->comp->addMouseListener (this, true);   // clic derecho: MIDI learn
         out.push_back (std::move (c));
     }
 }
@@ -142,6 +143,15 @@ SaturnoPanel::SaturnoPanel (Saturno8Processor& p)
     chordButton.setTooltip ("Mantén pulsadas las notas del acorde y pulsa aquí");
     chordButton.onClick = [this] { proc.requestChordLearn (page == 1 ? 1 : 0); };
     addAndMakeVisible (chordButton);
+
+    prevPreset.onClick = [this] { proc.stepPreset (-1); };
+    nextPreset.onClick = [this] { proc.stepPreset (1); };
+    presetButton.onClick = [this] { showPresetMenu(); };
+    presetButton.setTooltip ("Elegir preset");
+    savePreset.onClick = [this] { savePresetDialog(); };
+    savePreset.setTooltip ("Guardar el sonido actual como preset propio");
+    for (auto* b : { &prevPreset, &nextPreset, &presetButton, &savePreset }) addAndMakeVisible (b);
+    presetButton.setButtonText (proc.currentPresetName());
 
     keyboard.setAvailableRange (24, 108);
     keyboard.setOctaveForMiddleC (4);
@@ -333,6 +343,17 @@ void SaturnoPanel::resized()
 {
     sectionBoxes.clear();
     tabs.setBounds (kMargin, kHeader + 6, 560, kTabsH);
+    {
+        // Barra de presets entre el logotipo y la pantalla
+        auto bar = juce::Rectangle<int> (getWidth() - kMargin - 340 - 16 - 420, 22, 420, 28);
+        prevPreset.setBounds (bar.removeFromLeft (34));
+        bar.removeFromLeft (4);
+        nextPreset.setBounds (bar.removeFromLeft (34));
+        bar.removeFromLeft (6);
+        savePreset.setBounds (bar.removeFromRight (90));
+        bar.removeFromRight (6);
+        presetButton.setBounds (bar);
+    }
     const int top = kHeader + kTabsH + 14;
     if (page < 2) layoutRows (kLayerRows, layerControls, top);
     else if (page < 4) layoutRows (kFxRows, fxControls, top);
@@ -361,11 +382,89 @@ void SaturnoPanel::timerCallback()
     if (auto* t = proc.apvts.getParameter ("tempo")) l2 << "  " << t->getCurrentValueAsText();
     const float red = proc.limiterReduction.load();
     if (red < 0.99f) l2 << "  LIM " << juce::String (juce::Decibels::gainToDecibels (red), 1) << "dB";
+    if (proc.presetChanged.exchange (false))
+    {
+        presetButton.setButtonText (proc.currentPresetName());
+        for (auto* list : { &layerControls, &fxControls, &globalControls })
+            for (auto& c : *list) c->refreshValue();
+    }
+    for (auto* list : { &layerControls, &fxControls, &globalControls })
+        for (auto& c : *list)
+            if (c->param != nullptr && c->comp->isVisible() && proc.isLearning (c->param))
+                l2 = "MIDI LEARN: MUEVE UN CONTROL (" + upper (c->label.getText()) + ")";
     if (l1 != lcdLine1 || l2 != lcdLine2) { lcdLine1 = l1; lcdLine2 = l2; repaint (getWidth() - kMargin - 340, 12, 340, kHeader - 28); }
 
     if (page < 2)
         if (auto* len = proc.apvts.getRawParameterValue (Saturno8Processor::pid (Saturno8Processor::kPrefix[page], "seq_len")))
             grids[page].setLength ((int) len->load());
+}
+
+void SaturnoPanel::mouseDown (const juce::MouseEvent& e)
+{
+    if (! e.mods.isPopupMenu()) return;
+    for (auto* list : { &layerControls, &fxControls, &globalControls })
+        for (auto& c : *list)
+        {
+            if (! c->comp->isVisible() || c->param == nullptr) continue;
+            if (e.eventComponent != c->comp.get() && ! c->comp->isParentOf (e.eventComponent)) continue;
+            auto* param = c->param;
+            const int cc = proc.ccFor (param);
+            juce::PopupMenu m;
+            m.addSectionHeader (c->label.getText() + (cc >= 0 ? " (CC " + juce::String (cc) + ")" : juce::String()));
+            m.addItem (1, "Aprender MIDI: mueve un mando de tu controlador");
+            m.addItem (2, "Olvidar MIDI", cc >= 0);
+            m.addItem (3, "Valor de fábrica");
+            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (c->comp.get()),
+                             [this, param] (int r) {
+                                 if (r == 1) proc.startMidiLearn (param);
+                                 if (r == 2) proc.forgetMidi (param);
+                                 if (r == 3) param->setValueNotifyingHost (param->getDefaultValue());
+                             });
+            return;
+        }
+}
+
+void SaturnoPanel::showPresetMenu()
+{
+    juce::PopupMenu m, factory, user;
+    const auto names = Saturno8Processor::factoryNames();
+    for (int i = 0; i < names.size(); ++i) factory.addItem (1 + i, names[i], true, names[i] == proc.currentPresetName());
+    const auto files = Saturno8Processor::userPresets();
+    for (int i = 0; i < files.size(); ++i)
+        user.addItem (1000 + i, files[i].getFileNameWithoutExtension(), true, files[i].getFileNameWithoutExtension() == proc.currentPresetName());
+    m.addSubMenu (utf8 ("De fábrica"), factory);
+    m.addSubMenu ("Tuyos", user, files.size() > 0);
+    m.addSeparator();
+    m.addItem (2000, "Abrir la carpeta de presets");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&presetButton), [this, files] (int r) {
+        if (r >= 1 && r < 1000) proc.loadFactoryPreset (r - 1);
+        else if (r >= 1000 && r < 2000) proc.loadUserPreset (files[r - 1000]);
+        else if (r == 2000)
+        {
+            auto folder = Saturno8Processor::userPresetFolder();
+            folder.createDirectory();
+            folder.startAsProcess();
+        }
+    });
+}
+
+void SaturnoPanel::savePresetDialog()
+{
+    saveWindow = std::make_unique<juce::AlertWindow> ("Guardar preset", utf8 ("Nombre del preset (se guarda en Documentos/Saturno 8/Presets):"),
+                                                      juce::MessageBoxIconType::NoIcon, this);
+    saveWindow->addTextEditor ("name", proc.currentPresetName());
+    saveWindow->addButton ("Guardar", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    saveWindow->addButton ("Cancelar", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    saveWindow->enterModalState (true, juce::ModalCallbackFunction::create ([this] (int r) {
+        if (r == 1 && saveWindow != nullptr)
+        {
+            const auto name = saveWindow->getTextEditorContents ("name");
+            if (! proc.saveUserPreset (name))
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Guardar preset",
+                                                        "No se ha podido guardar el preset.");
+        }
+        saveWindow.reset();
+    }), false);
 }
 
 // ------------------------------------------------------------------ editor escalable

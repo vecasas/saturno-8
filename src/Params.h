@@ -169,6 +169,7 @@ inline const std::vector<ParamDef>& globalParamDefs()
         { "tune",       "Afinación",  "Máster", PType::Float, -1, 1, 0, 1, nullptr },
         { "limiter",    "Limitador",  "Máster", PType::Bool, 0, 1, 1, 1, nullptr },
         { "tempo",      "Tempo",      "Máster", PType::Float, 40, 240, 120, 1, nullptr },
+        { "quality",    "Calidad",    "Máster", PType::Choice, 0, 2, 0, 1, "x1|x2|x4" },
         // Efectos globales
         { "eq_on",      "Activo",     "Ecualizador", PType::Bool, 0, 1, 0, 1, nullptr },
         { "eq_low",     "Graves",     "Ecualizador", PType::Float, -12, 12, 0, 1, nullptr },

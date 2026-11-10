@@ -17,6 +17,9 @@ public:
 
 private:
     void timerCallback() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void showPresetMenu();
+    void savePresetDialog();
 
     enum class Kind { Fader, Switch, Keys, Lcd };
     struct Control
@@ -53,6 +56,8 @@ private:
     } tabs;
     StepGrid grids[2];
     juce::TextButton chordButton { "Aprender acorde" };
+    juce::TextButton prevPreset { "<" }, nextPreset { ">" }, presetButton, savePreset { "Guardar" };
+    std::unique_ptr<juce::AlertWindow> saveWindow;
     juce::String lcdLine1, lcdLine2;
     juce::MidiKeyboardComponent keyboard;
 
