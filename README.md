@@ -113,9 +113,9 @@ Diseño propio dibujado por código, sin imágenes: panel grafito con franjas de
 ## Presets, MIDI learn y sobremuestreo (fase 7)
 
 - **Presets**: la barra de la cabecera tiene anterior / siguiente, el nombre (clic = menú) y **Guardar**.
-  - **De fábrica**: 14 sonidos de programación propia (Inicial, Metales del anillo, Cuerdas de Titán, Pad pulsante, Bajo Encélado, Lead sincronizado, Campanas de hielo, Arpegio orbital, Secuencia de Febe, Doble: piano y pad, División: bajo y metales, Acorde menor 9, Barrido con ruido y Viejo y desafinado). El DAW también los ve como programas.
+  - **De fábrica**: 53 sonidos de programación propia: bajos, solistas, pads, cuerdas y metales, teclas, campanas y efectos, arpegios y secuencias, y combinaciones de capas y acordes. El DAW también los ve como programas.
   - **Tuyos**: guardan todo el sonido de las dos capas, los efectos, el acorde y las secuencias, en `Documentos/Saturno 8/Presets` como archivos `.s8preset` que se pueden copiar entre Mac y Windows. Cargar un preset no cambia el volumen general, el tempo, la calidad ni el mapa MIDI.
 - **MIDI learn**: clic derecho en cualquier control → *Aprender MIDI* y mueve un mando del controlador; *Olvidar MIDI* lo quita. La pantalla avisa mientras espera. El mapa se guarda con el proyecto del DAW.
 - **Calidad** (sección Máster): x1, x2 o x4. Con x2 y x4 el motor calcula internamente a doble o cuádruple frecuencia (menos aliasing en sync, cruzada y resonancia alta) a cambio de más CPU. Cambiarla reinicia las voces.
 
-Comprobaciones con `ui_snapshot`: los 14 presets suenan sin NaN a x1 y a x4, y el estado (preset, secuencia y mapa MIDI) se guarda y se recupera igual.
+Comprobaciones con `ui_snapshot`: los 53 presets suenan sin NaN a x1 y a x4, y el estado (preset, secuencia y mapa MIDI) se guarda y se recupera igual.
